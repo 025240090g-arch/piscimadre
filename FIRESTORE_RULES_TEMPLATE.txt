@@ -1,0 +1,89 @@
+// IMPORTANTE: reemplaza 025240090g@uandina.edu.pe por el correo exacto del administrador
+// y confirma que VITE_FIREBASE_DATASET_ID en Vercel sea "default-app-id".
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email == '025240090g@uandina.edu.pe';
+    }
+
+    function isApprovedOwner() {
+      return signedIn()
+        && request.auth.token.email_verified == true
+        && exists(/databases/$(database)/documents/ownerProfiles/$(request.auth.uid))
+        && get(/databases/$(database)/documents/ownerProfiles/$(request.auth.uid)).data.status == 'approved';
+    }
+
+    function validPoolData(data) {
+      return data.keys().hasAll([
+          'ownerId', 'name', 'openTime', 'closeTime', 'price', 'hasFood',
+          'foodMenu', 'whatsapp', 'lat', 'lng', 'isFull', 'updatedAt', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'name', 'openTime', 'closeTime', 'price', 'hasFood',
+          'foodMenu', 'whatsapp', 'lat', 'lng', 'isFull', 'updatedAt', 'createdAt'
+        ])
+        && data.ownerId is string
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 120
+        && data.openTime is string && data.closeTime is string
+        && data.price is number && data.price >= 0
+        && data.hasFood is bool && data.foodMenu is string
+        && data.whatsapp is string
+        && data.lat is number && data.lat >= -90 && data.lat <= 90
+        && data.lng is number && data.lng >= -180 && data.lng <= 180
+        && data.isFull is bool
+        && data.updatedAt is string && data.createdAt is string;
+    }
+
+    // Solicitudes de acceso de propietarios. Cada usuario solo puede crear/leer su solicitud.
+    match /ownerProfiles/{ownerUid} {
+      allow get: if isAdmin() || (signedIn() && request.auth.uid == ownerUid);
+      allow list: if isAdmin();
+
+      allow create: if signedIn()
+        && request.auth.uid == ownerUid
+        && request.auth.token.email_verified == true
+        && request.resource.data.keys().hasAll(['email', 'name', 'status', 'createdAt', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['email', 'name', 'status', 'createdAt', 'updatedAt'])
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.name is string
+        && request.resource.data.status == 'pending';
+
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'reviewedAt', 'reviewedBy'])
+        && request.resource.data.status in ['approved', 'rejected'];
+
+      allow delete: if isAdmin();
+    }
+
+    // Directorio público: todos pueden leer; solo dueños aprobados y el admin pueden escribir.
+    match /artifacts/default-app-id/public/data/pools/{poolId} {
+      allow read: if true;
+
+      allow create: if validPoolData(request.resource.data)
+        && (
+          isAdmin()
+          || (isApprovedOwner() && request.resource.data.ownerId == request.auth.uid)
+        );
+
+      allow update: if validPoolData(request.resource.data)
+        && (
+          isAdmin()
+          || (
+            isApprovedOwner()
+            && resource.data.ownerId == request.auth.uid
+            && request.resource.data.ownerId == resource.data.ownerId
+          )
+        );
+
+      allow delete: if isAdmin()
+        || (isApprovedOwner() && resource.data.ownerId == request.auth.uid);
+    }
+  }
+}
