@@ -1,0 +1,1083 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, signOut, reload, updateProfile } from 'firebase/auth';
+import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { 
+  MapPin, Map as MapIcon, List, Clock, DollarSign, Utensils, 
+  MessageCircle, Plus, Edit2, Trash2, CheckCircle, XCircle, 
+  Settings, LogOut, Info, AlertTriangle, Menu, X,
+  Download, Smartphone, Share, Mail as MailIcon
+} from 'lucide-react';
+
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+    apiKey: "mock", authDomain: "mock", projectId: "mock", storageBucket: "mock", messagingSenderId: "mock", appId: "mock"
+};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || '').trim().toLowerCase();
+const OWNER_PROFILES_COLLECTION = 'ownerProfiles';
+const isAdminUser = (user) => Boolean(ADMIN_EMAIL && user?.emailVerified && user?.email?.toLowerCase() === ADMIN_EMAIL);
+
+const PUERTO_MALDONADO_COORDS = [-12.5933, -69.1836];
+
+const loadLeaflet = () => {
+  return new Promise((resolve) => {
+    if (window.L) {
+      resolve(window.L);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    script.onload = () => resolve(window.L);
+    document.head.appendChild(script);
+  });
+};
+
+const injectStyles = () => {
+  if (!document.getElementById('pool-app-styles')) {
+    const style = document.createElement('style');
+    style.id = 'pool-app-styles';
+    style.innerHTML = `
+      @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
+      
+      .pool-app-container { font-family: 'Outfit', sans-serif; }
+      .leaflet-popup-content-wrapper { background: #1E293B; color: #F8FAFC; border-radius: 12px; }
+      .leaflet-popup-tip { background: #1E293B; }
+      .leaflet-container { font-family: 'Outfit', sans-serif; z-index: 10; }
+      ::-webkit-scrollbar { width: 8px; }
+      ::-webkit-scrollbar-track { background: #0F172A; }
+      ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    `;
+    document.head.appendChild(style);
+  }
+  
+  if (!document.getElementById('leaflet-css')) {
+    const link = document.createElement('link');
+    link.id = 'leaflet-css';
+    link.rel = 'stylesheet';
+    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(link);
+  }
+};
+
+export default function PoolDirectoryApp() {
+  const [user, setUser] = useState(null);
+  const [ownerProfile, setOwnerProfile] = useState(null);
+  const [ownerAccessLoading, setOwnerAccessLoading] = useState(false);
+  const [authRefresh, setAuthRefresh] = useState(0);
+  const [pools, setPools] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [viewMode, setViewMode] = useState('public');
+  const [notification, setNotification] = useState({ show: false, message: '', type: 'info' });
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [showInstallModal, setShowInstallModal] = useState(false);
+  const [filters, setFilters] = useState({ openNow: false, free: false, food: false });
+
+  useEffect(() => {
+    injectStyles();
+  }, []);
+
+  useEffect(() => {
+    let signingInAnonymously = false;
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      // The public directory uses an anonymous session. Recreate it after an owner signs out.
+      if (!currentUser && !signingInAnonymously) {
+        signingInAnonymously = true;
+        try {
+          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            await signInWithCustomToken(auth, __initial_auth_token);
+          } else {
+            await signInAnonymously(auth);
+          }
+        } catch (err) {
+          console.error('Auth initialization error:', err);
+          setLoading(false);
+          showNotification('No se pudo iniciar la sesión pública. Recarga la página.', 'error');
+        } finally {
+          signingInAnonymously = false;
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Verified email accounts receive a pending owner profile automatically.
+  // The administrator account is identified by VITE_ADMIN_EMAIL and does not need an owner profile.
+  useEffect(() => {
+    if (!user || user.isAnonymous) {
+      setOwnerProfile(null);
+      setOwnerAccessLoading(false);
+      return;
+    }
+    if (!user.emailVerified) {
+      setOwnerProfile({ status: 'unverified' });
+      setOwnerAccessLoading(false);
+      return;
+    }
+    if (isAdminUser(user)) {
+      setOwnerProfile({ status: 'approved', role: 'admin' });
+      setOwnerAccessLoading(false);
+      return;
+    }
+
+    setOwnerAccessLoading(true);
+    const profileRef = doc(db, OWNER_PROFILES_COLLECTION, user.uid);
+    let creatingProfile = false;
+    const unsubscribe = onSnapshot(profileRef, async (snapshot) => {
+      if (snapshot.exists()) {
+        setOwnerProfile({ id: snapshot.id, ...snapshot.data() });
+        setOwnerAccessLoading(false);
+        return;
+      }
+      if (creatingProfile) return;
+      creatingProfile = true;
+      try {
+        await setDoc(profileRef, {
+          email: user.email || '',
+          name: user.displayName || '',
+          status: 'pending',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (error) {
+        console.error('Owner profile creation error:', error);
+        setOwnerProfile({ status: 'error', message: error.message || 'No se pudo crear la solicitud.' });
+        setOwnerAccessLoading(false);
+      }
+    }, (error) => {
+      console.error('Owner profile listener error:', error);
+      setOwnerProfile({ status: 'error', message: error.message || 'No se pudo consultar tu solicitud.' });
+      setOwnerAccessLoading(false);
+    });
+    return () => unsubscribe();
+  }, [user, authRefresh]);
+
+  useEffect(() => {
+    if (!user) return;
+    setLoading(true);
+    const poolsRef = collection(db, 'artifacts', appId, 'public', 'data', 'pools');
+    
+    const unsubscribe = onSnapshot(poolsRef, (snapshot) => {
+      const poolsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setPools(poolsData);
+      setLoading(false);
+    }, (error) => {
+      console.error("Firestore Error:", error);
+      showNotification("Error al cargar datos", "error");
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  const showNotification = (message, type = 'info') => {
+    setNotification({ show: true, message, type });
+    setTimeout(() => setNotification({ show: false, message: '', type: 'info' }), 4000);
+  };
+
+  const isPoolOpenNow = (openTime, closeTime) => {
+    if (!openTime || !closeTime) return false;
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const [openH, openM] = openTime.split(':').map(Number);
+    const [closeH, closeM] = closeTime.split(':').map(Number);
+    const openMins = openH * 60 + openM;
+    const closeMins = closeH * 60 + closeM;
+    
+    if (closeMins < openMins) {
+      return currentMinutes >= openMins || currentMinutes <= closeMins;
+    }
+    return currentMinutes >= openMins && currentMinutes <= closeMins;
+  };
+
+  const filteredPools = useMemo(() => {
+    return pools.filter(pool => {
+      if (filters.openNow && !isPoolOpenNow(pool.openTime, pool.closeTime)) return false;
+      if (filters.free && pool.price > 0) return false;
+      if (filters.food && !pool.hasFood) return false;
+      return true;
+    });
+  }, [pools, filters]);
+
+  return (
+    <div className="pool-app-container min-h-screen bg-[#0F172A] text-slate-200 flex flex-col font-sans">
+      <nav className="bg-[#1E293B] border-b border-[#334155] px-4 py-3 sticky top-0 z-50 flex justify-between items-center shadow-lg">
+        <div className="flex items-center gap-2">
+          <div className="bg-cyan-500 p-2 rounded-xl shadow-[0_0_15px_rgba(6,182,212,0.4)]">
+            <DropletIcon className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-white tracking-wide">Pisci<span className="text-cyan-400">Madre</span></h1>
+            <p className="text-[10px] text-cyan-200 uppercase tracking-wider font-semibold">Directorio Puerto Maldonado</p>
+          </div>
+        </div>
+
+        <div className="hidden md:flex gap-4 items-center">
+          <button 
+            onClick={() => setShowInstallModal(true)}
+            className="flex items-center gap-2 text-cyan-400 hover:text-cyan-300 font-medium mr-4 px-3 py-1.5 rounded-lg border border-cyan-500/30 hover:bg-cyan-500/10 transition-colors"
+          >
+            <Download className="w-4 h-4" /> Instalar App
+          </button>
+          <button 
+            onClick={() => setViewMode('public')}
+            className={`px-4 py-2 rounded-lg font-medium transition-all ${viewMode === 'public' ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
+          >
+            Directorio Público
+          </button>
+          <button 
+            onClick={() => setViewMode('owner')}
+            className={`px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2 ${viewMode === 'owner' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
+          >
+            <Settings className="w-4 h-4" /> Panel Dueños
+          </button>
+        </div>
+
+        <button className="md:hidden p-2 text-slate-300" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
+          {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+        </button>
+      </nav>
+
+      {mobileMenuOpen && (
+        <div className="md:hidden bg-[#1E293B] border-b border-[#334155] p-4 flex flex-col gap-3 absolute w-full z-40 shadow-xl">
+          <button 
+            onClick={() => { setShowInstallModal(true); setMobileMenuOpen(false); }}
+            className="px-4 py-3 rounded-lg font-bold w-full text-left flex items-center gap-2 bg-gradient-to-r from-cyan-600 to-cyan-500 text-white shadow-lg mb-2"
+          >
+            <Smartphone className="w-5 h-5" /> Instalar en el Celular
+          </button>
+          <button 
+            onClick={() => { setViewMode('public'); setMobileMenuOpen(false); }}
+            className={`px-4 py-3 rounded-lg font-medium w-full text-left ${viewMode === 'public' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-300'}`}
+          >
+            Directorio Público
+          </button>
+          <button 
+            onClick={() => { setViewMode('owner'); setMobileMenuOpen(false); }}
+            className={`px-4 py-3 rounded-lg font-medium w-full text-left flex items-center gap-2 ${viewMode === 'owner' ? 'bg-emerald-500/20 text-emerald-400' : 'text-slate-300'}`}
+          >
+            <Settings className="w-4 h-4" /> Panel para Dueños
+          </button>
+        </div>
+      )}
+
+      {notification.show && (
+        <div className={`fixed top-20 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-full font-semibold shadow-2xl flex items-center gap-2 animate-bounce
+          ${notification.type === 'error' ? 'bg-rose-500 text-white' : 'bg-cyan-500 text-white'}
+        `}>
+          {notification.type === 'error' ? <AlertTriangle className="w-5 h-5"/> : <Info className="w-5 h-5"/>}
+          {notification.message}
+        </div>
+      )}
+
+      <main className="flex-1 flex flex-col relative">
+        {viewMode === 'public' ? (
+          loading && pools.length === 0 ? (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-cyan-400"></div>
+            </div>
+          ) : (
+            <PublicView pools={filteredPools} filters={filters} setFilters={setFilters} />
+          )
+        ) : (
+          !user || user.isAnonymous ? (
+            <OwnerAuth showNotification={showNotification} onBack={() => setViewMode('public')} />
+          ) : !user.emailVerified ? (
+            <VerifyOwnerEmail user={user} showNotification={showNotification} onRefresh={(refreshedUser) => { if (refreshedUser) setUser(refreshedUser); setAuthRefresh(v => v + 1); }} onBack={() => setViewMode('public')} />
+          ) : ownerAccessLoading ? (
+            <div className="flex-1 flex items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-cyan-400"></div></div>
+          ) : isAdminUser(user) ? (
+            <AdminDashboard user={user} pools={pools} showNotification={showNotification} onLogout={() => signOut(auth)} />
+          ) : ownerProfile?.status === 'approved' ? (
+            <OwnerDashboard user={user} pools={pools} showNotification={showNotification} onLogout={() => signOut(auth)} />
+          ) : ownerProfile?.status === 'pending' ? (
+            <OwnerPending user={user} onLogout={() => signOut(auth)} />
+          ) : ownerProfile?.status === 'rejected' ? (
+            <OwnerRejected user={user} onLogout={() => signOut(auth)} />
+          ) : ownerProfile?.status === 'error' ? (
+            <OwnerProfileError message={ownerProfile.message} onLogout={() => signOut(auth)} />
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-slate-300">No se pudo determinar el estado de tu cuenta. Cierra sesión e inténtalo de nuevo.</div>
+          )
+        )}
+      </main>
+
+      {showInstallModal && <InstallModal onClose={() => setShowInstallModal(false)} />}
+    </div>
+  );
+}
+
+function PublicView({ pools, filters, setFilters }) {
+  const [activeTab, setActiveTab] = useState('map');
+
+  return (
+    <div className="flex-1 flex flex-col lg:flex-row h-[calc(100vh-70px)]">
+      <div className="lg:hidden flex bg-[#1E293B] border-b border-slate-700">
+        <button 
+          onClick={() => setActiveTab('map')}
+          className={`flex-1 py-3 font-semibold flex items-center justify-center gap-2 ${activeTab === 'map' ? 'text-cyan-400 border-b-2 border-cyan-400' : 'text-slate-400'}`}
+        >
+          <MapIcon className="w-5 h-5" /> Mapa
+        </button>
+        <button 
+          onClick={() => setActiveTab('list')}
+          className={`flex-1 py-3 font-semibold flex items-center justify-center gap-2 ${activeTab === 'list' ? 'text-cyan-400 border-b-2 border-cyan-400' : 'text-slate-400'}`}
+        >
+          <List className="w-5 h-5" /> Lista ({pools.length})
+        </button>
+      </div>
+
+      <div className={`flex-1 relative ${activeTab === 'map' ? 'block' : 'hidden lg:block'}`}>
+        <MapComponent pools={pools} />
+        
+        <div className="absolute bottom-6 right-4 z-[400] bg-[#1E293B]/90 backdrop-blur p-3 rounded-xl shadow-lg border border-slate-700 text-sm">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-4 h-4 rounded-full bg-emerald-500 border-2 border-white"></div>
+            <span>Disponible</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 rounded-full bg-rose-500 border-2 border-white"></div>
+            <span>Lleno / Sin espacio</span>
+          </div>
+        </div>
+      </div>
+
+      <div className={`w-full lg:w-[450px] xl:w-[500px] bg-[#0F172A] border-l border-slate-800 flex flex-col h-full overflow-hidden ${activeTab === 'list' ? 'block' : 'hidden lg:flex'}`}>
+        <div className="p-4 bg-[#1E293B] border-b border-slate-700 shrink-0">
+          <h2 className="text-lg font-bold mb-3 text-white">Filtros</h2>
+          <div className="flex flex-wrap gap-2">
+            <FilterChip 
+              active={filters.openNow} 
+              onClick={() => setFilters(f => ({...f, openNow: !f.openNow}))}
+              icon={<Clock className="w-4 h-4" />} label="Abierto Ahora" 
+            />
+            <FilterChip 
+              active={filters.free} 
+              onClick={() => setFilters(f => ({...f, free: !f.free}))}
+              icon={<DollarSign className="w-4 h-4" />} label="Gratis" 
+            />
+            <FilterChip 
+              active={filters.food} 
+              onClick={() => setFilters(f => ({...f, food: !f.food}))}
+              icon={<Utensils className="w-4 h-4" />} label="Con Comida" 
+            />
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {pools.length === 0 ? (
+            <div className="text-center p-8 text-slate-400">
+              <DropletIcon className="w-12 h-12 mx-auto mb-3 opacity-20" />
+              <p>No se encontraron piscinas con estos filtros.</p>
+            </div>
+          ) : (
+            pools.map(pool => <PoolCard key={pool.id} pool={pool} />)
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FilterChip({ active, onClick, icon, label }) {
+  return (
+    <button 
+      onClick={onClick}
+      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors border
+        ${active ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300' : 'bg-slate-800 border-slate-600 text-slate-400 hover:bg-slate-700'}
+      `}
+    >
+      {icon} {label}
+    </button>
+  );
+}
+
+function PoolCard({ pool }) {
+  const formatWhatsapp = (num) => {
+    let clean = num.replace(/\D/g, '');
+    if (clean.length === 9) clean = `51${clean}`;
+    return `https://wa.me/${clean}`;
+  };
+
+  return (
+    <div className="bg-[#1E293B] border border-slate-700 rounded-2xl overflow-hidden shadow-lg hover:border-cyan-500/50 transition-colors">
+      <div className="p-5">
+        <div className="flex justify-between items-start mb-3">
+          <h3 className="text-xl font-bold text-white leading-tight">{pool.name}</h3>
+          <div className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide flex items-center gap-1 ${pool.isFull ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'}`}>
+            <span className={`w-2 h-2 rounded-full ${pool.isFull ? 'bg-rose-500' : 'bg-emerald-500 animate-pulse'}`}></span>
+            {pool.isFull ? 'Lleno' : 'Disponible'}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-4 text-sm text-slate-300">
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-cyan-400" />
+            <span>{pool.openTime} - {pool.closeTime}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <DollarSign className="w-4 h-4 text-emerald-400" />
+            <span className="font-semibold">{Number(pool.price) === 0 ? 'Gratis' : `S/ ${pool.price}`}</span>
+          </div>
+        </div>
+
+        {pool.hasFood && (
+          <div className="mb-4 bg-slate-800/50 p-3 rounded-lg border border-slate-700/50">
+            <div className="flex items-center gap-2 mb-1 text-teal-400 font-medium text-sm">
+              <Utensils className="w-4 h-4" /> Ofrecen Comida
+            </div>
+            {pool.foodMenu && <p className="text-xs text-slate-400 italic mt-1 line-clamp-2">{pool.foodMenu}</p>}
+          </div>
+        )}
+
+        {pool.whatsapp && (
+          <a 
+            href={formatWhatsapp(pool.whatsapp)} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="w-full bg-[#25D366] hover:bg-[#1EBE5D] text-white py-2.5 rounded-xl font-semibold flex items-center justify-center gap-2 transition-transform active:scale-95"
+          >
+            <MessageCircle className="w-5 h-5" /> Contactar por WhatsApp
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MapComponent({ pools, onMapClick, editingPosition }) {
+  const mapRef = useRef(null);
+  const leafletMapRef = useRef(null);
+  const layerGroupRef = useRef(null);
+  const [L, setL] = useState(null);
+
+  useEffect(() => {
+    loadLeaflet().then(leaflet => {
+      setL(leaflet);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!L || !mapRef.current) return;
+
+    if (!leafletMapRef.current) {
+      if (mapRef.current._leaflet_id) {
+        mapRef.current._leaflet_id = null;
+        mapRef.current.innerHTML = '';
+      }
+
+      const map = L.map(mapRef.current, { zoomControl: false }).setView(PUERTO_MALDONADO_COORDS, 13);
+      
+      L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+        maxZoom: 20,
+        subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+        attribution: '&copy; Google Maps'
+      }).addTo(map);
+      
+      layerGroupRef.current = L.layerGroup().addTo(map);
+      leafletMapRef.current = map;
+
+      if (onMapClick) {
+        map.on('click', (e) => {
+          onMapClick([e.latlng.lat, e.latlng.lng]);
+        });
+      }
+
+      setTimeout(() => {
+        map.invalidateSize();
+      }, 250);
+    }
+
+    const map = leafletMapRef.current;
+    const layerGroup = layerGroupRef.current;
+    layerGroup.clearLayers();
+
+    const createStatusIcon = (isFull) => {
+      return L.divIcon({
+        className: 'custom-pool-marker',
+        html: `
+          <div style="
+            background-color: ${isFull ? '#E11D48' : '#10B981'};
+            width: 28px; height: 28px; 
+            border-radius: 50%; 
+            border: 3px solid #ffffff; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            display: flex; justify-content: center; align-items: center;
+          ">
+            <div style="width: 8px; height: 8px; background: white; border-radius: 50%;"></div>
+          </div>
+        `,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+        popupAnchor: [0, -14]
+      });
+    };
+
+    const defaultIcon = L.icon({
+      iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+      iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+      shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+      iconSize: [25, 41],
+      iconAnchor: [12, 41]
+    });
+
+    if (editingPosition) {
+      L.marker(editingPosition, { icon: defaultIcon }).addTo(layerGroup);
+    }
+
+    pools.forEach(pool => {
+      const marker = L.marker([pool.lat, pool.lng], { icon: createStatusIcon(pool.isFull) }).addTo(layerGroup);
+      
+      const popupContent = `
+        <div class="p-1 font-sans text-slate-800">
+          <h4 class="font-bold text-lg mb-1">${pool.name}</h4>
+          <p class="font-semibold mb-2 ${pool.isFull ? 'text-rose-600' : 'text-emerald-600'}">
+            ${pool.isFull ? '🔴 Lleno' : '🟢 Disponible'}
+          </p>
+          <p class="text-sm">🕒 ${pool.openTime} - ${pool.closeTime}</p>
+          <p class="text-sm">💰 ${Number(pool.price) === 0 ? 'Gratis' : 'S/ ' + pool.price}</p>
+        </div>
+      `;
+      marker.bindPopup(popupContent);
+    });
+
+  }, [L, pools, editingPosition, onMapClick]);
+
+  return <div ref={mapRef} className="absolute inset-0 w-full h-full z-10 bg-[#0F172A]"></div>;
+}
+
+function OwnerAuth({ showNotification, onBack }) {
+  const [mode, setMode] = useState('login');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setSubmitting(true);
+    try {
+      if (mode === 'register') {
+        const credential = await createUserWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
+        if (name.trim()) await updateProfile(credential.user, { displayName: name.trim() });
+        await sendEmailVerification(credential.user);
+        showNotification('Cuenta creada. Revisa tu correo para verificarla.', 'success');
+      } else {
+        const credential = await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
+        if (!credential.user.emailVerified) {
+          await sendEmailVerification(credential.user);
+          showNotification('Tu correo aún no está verificado. Te reenviamos el enlace.', 'error');
+        } else {
+          showNotification('Sesión iniciada correctamente.', 'success');
+        }
+      }
+    } catch (error) {
+      console.error('Owner authentication error:', error);
+      const messages = {
+        'auth/email-already-in-use': 'Ese correo ya tiene una cuenta. Inicia sesión.',
+        'auth/invalid-email': 'El correo no tiene un formato válido.',
+        'auth/weak-password': 'La contraseña debe tener al menos 6 caracteres.',
+        'auth/invalid-credential': 'Correo o contraseña incorrectos.',
+        'auth/user-not-found': 'No existe una cuenta con ese correo.',
+        'auth/wrong-password': 'Correo o contraseña incorrectos.',
+        'auth/too-many-requests': 'Demasiados intentos. Espera un momento e inténtalo otra vez.',
+        'auth/operation-not-allowed': 'Activa Email/Password en Firebase Authentication.',
+      };
+      showNotification(messages[error.code] || error.message || 'No se pudo completar el acceso.', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handlePasswordReset = async () => {
+    if (!email.trim()) {
+      showNotification('Escribe tu correo para enviarte el enlace de recuperación.', 'error');
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, email.trim().toLowerCase());
+      showNotification('Te enviamos un enlace para restablecer tu contraseña.', 'success');
+    } catch (error) {
+      console.error(error);
+      showNotification(error.message || 'No se pudo enviar el correo.', 'error');
+    }
+  };
+
+  return (
+    <div className="flex-1 flex items-center justify-center p-4 md:p-8">
+      <div className="w-full max-w-md bg-[#1E293B] border border-slate-700 rounded-2xl p-7 shadow-2xl">
+        <button onClick={onBack} className="text-slate-400 hover:text-white mb-5">← Volver al directorio</button>
+        <div className="flex items-center gap-3 mb-2"><Settings className="w-7 h-7 text-emerald-400"/><h2 className="text-2xl font-bold text-white">Acceso para propietarios</h2></div>
+        <p className="text-slate-400 text-sm mb-6">Registra tu cuenta o inicia sesión para administrar una piscina. Las nuevas cuentas deben ser aprobadas por Piscimadre.</p>
+        <div className="flex bg-[#0F172A] rounded-xl p-1 mb-5">
+          <button type="button" onClick={() => setMode('login')} className={`flex-1 py-2 rounded-lg font-semibold ${mode === 'login' ? 'bg-cyan-500 text-slate-900' : 'text-slate-400'}`}>Iniciar sesión</button>
+          <button type="button" onClick={() => setMode('register')} className={`flex-1 py-2 rounded-lg font-semibold ${mode === 'register' ? 'bg-cyan-500 text-slate-900' : 'text-slate-400'}`}>Solicitar acceso</button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {mode === 'register' && <div><label className="block text-sm font-semibold text-slate-300 mb-1">Nombre del propietario</label><input required value={name} onChange={e => setName(e.target.value)} className="w-full bg-[#0F172A] border border-slate-600 rounded-lg px-4 py-3 text-white" placeholder="Tu nombre" /></div>}
+          <div><label className="block text-sm font-semibold text-slate-300 mb-1">Correo electrónico</label><input required type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full bg-[#0F172A] border border-slate-600 rounded-lg px-4 py-3 text-white" placeholder="nombre@correo.com" autoComplete="email" /></div>
+          <div><label className="block text-sm font-semibold text-slate-300 mb-1">Contraseña</label><input required type="password" minLength={6} value={password} onChange={e => setPassword(e.target.value)} className="w-full bg-[#0F172A] border border-slate-600 rounded-lg px-4 py-3 text-white" placeholder="Mínimo 6 caracteres" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} /></div>
+          <button disabled={submitting} className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-60 text-slate-900 font-bold py-3 rounded-xl">{submitting ? 'Procesando…' : mode === 'login' ? 'Entrar al panel' : 'Crear cuenta y solicitar aprobación'}</button>
+        </form>
+        {mode === 'login' && <button onClick={handlePasswordReset} className="text-sm text-cyan-400 hover:underline mt-4">¿Olvidaste tu contraseña?</button>}
+        <p className="text-xs text-slate-500 mt-5">El directorio público no requiere cuenta. El registro solo habilita una solicitud; no permite publicar hasta recibir aprobación.</p>
+      </div>
+    </div>
+  );
+}
+
+function VerifyOwnerEmail({ user, showNotification, onRefresh, onBack }) {
+  const [checking, setChecking] = useState(false);
+  const refreshVerification = async () => {
+    setChecking(true);
+    try {
+      await reload(auth.currentUser);
+      await auth.currentUser.getIdToken(true);
+      onRefresh(auth.currentUser);
+      if (auth.currentUser?.emailVerified) showNotification('Correo verificado. Estamos revisando tu solicitud.', 'success');
+      else showNotification('Todavía no figura como verificado. Abre el enlace que enviamos a tu correo.', 'error');
+    } catch (error) {
+      showNotification(error.message || 'No se pudo comprobar la verificación.', 'error');
+    } finally { setChecking(false); }
+  };
+  const resend = async () => {
+    try { await sendEmailVerification(auth.currentUser); showNotification('Te reenviamos el correo de verificación.', 'success'); }
+    catch (error) { showNotification(error.message || 'No se pudo reenviar el correo.', 'error'); }
+  };
+  return <div className="flex-1 flex items-center justify-center p-4"><div className="max-w-lg w-full bg-[#1E293B] border border-slate-700 rounded-2xl p-8 text-center">
+    <MailIcon className="w-12 h-12 text-cyan-400 mx-auto mb-4"/><h2 className="text-2xl font-bold text-white mb-2">Verifica tu correo</h2>
+    <p className="text-slate-300 mb-2">Enviamos un enlace a <strong>{user.email}</strong>.</p><p className="text-slate-400 text-sm mb-6">Abre el correo, confirma tu dirección y vuelve aquí. Después tu solicitud quedará pendiente de aprobación.</p>
+    <button onClick={refreshVerification} disabled={checking} className="w-full bg-cyan-500 text-slate-900 font-bold py-3 rounded-xl disabled:opacity-60">{checking ? 'Comprobando…' : 'Ya verifiqué mi correo'}</button>
+    <button onClick={resend} className="text-cyan-400 text-sm mt-4 hover:underline">Reenviar correo de verificación</button>
+    <div><button onClick={onBack} className="text-slate-400 text-sm mt-5 hover:text-white">Volver al directorio</button></div>
+  </div></div>;
+}
+
+function OwnerPending({ user, onLogout }) {
+  return <div className="flex-1 flex items-center justify-center p-4"><div className="max-w-lg w-full bg-[#1E293B] border border-amber-500/30 rounded-2xl p-8 text-center">
+    <Clock className="w-12 h-12 text-amber-400 mx-auto mb-4"/><h2 className="text-2xl font-bold text-white mb-2">Solicitud pendiente</h2>
+    <p className="text-slate-300 mb-2">Tu cuenta <strong>{user.email}</strong> ya está verificada.</p><p className="text-slate-400 text-sm mb-6">El equipo de Piscimadre debe aprobar tu acceso antes de que puedas publicar o administrar piscinas.</p>
+    <button onClick={onLogout} className="px-5 py-3 rounded-xl border border-slate-600 text-slate-300 hover:bg-slate-800">Cerrar sesión</button>
+  </div></div>;
+}
+
+function OwnerRejected({ user, onLogout }) {
+  return <div className="flex-1 flex items-center justify-center p-4"><div className="max-w-lg w-full bg-[#1E293B] border border-rose-500/30 rounded-2xl p-8 text-center">
+    <XCircle className="w-12 h-12 text-rose-400 mx-auto mb-4"/><h2 className="text-2xl font-bold text-white mb-2">Solicitud no aprobada</h2><p className="text-slate-400 mb-6">Tu solicitud para {user.email} no fue aprobada. Contacta al equipo de Piscimadre si necesitas más información.</p>
+    <button onClick={onLogout} className="px-5 py-3 rounded-xl border border-slate-600 text-slate-300 hover:bg-slate-800">Cerrar sesión</button>
+  </div></div>;
+}
+
+function OwnerProfileError({ message, onLogout }) {
+  return <div className="flex-1 flex items-center justify-center p-4"><div className="max-w-lg w-full bg-[#1E293B] border border-rose-500/30 rounded-2xl p-8 text-center">
+    <AlertTriangle className="w-12 h-12 text-rose-400 mx-auto mb-4"/><h2 className="text-2xl font-bold text-white mb-2">No se pudo consultar tu solicitud</h2><p className="text-slate-400 text-sm mb-6">{message}</p><button onClick={onLogout} className="px-5 py-3 rounded-xl border border-slate-600 text-slate-300">Cerrar sesión</button>
+  </div></div>;
+}
+
+function AdminDashboard({ user, pools, showNotification, onLogout }) {
+  const [owners, setOwners] = useState([]);
+  const [loadingOwners, setLoadingOwners] = useState(true);
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, OWNER_PROFILES_COLLECTION), (snapshot) => {
+      setOwners(snapshot.docs.map(ownerDoc => ({ id: ownerDoc.id, ...ownerDoc.data() })));
+      setLoadingOwners(false);
+    }, (error) => {
+      console.error('Admin owner list error:', error);
+      showNotification('No se pudieron cargar las solicitudes de propietarios.', 'error');
+      setLoadingOwners(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const decideOwner = async (owner, status) => {
+    try {
+      await updateDoc(doc(db, OWNER_PROFILES_COLLECTION, owner.id), {
+        status,
+        reviewedAt: serverTimestamp(),
+        reviewedBy: user.email,
+      });
+      showNotification(status === 'approved' ? `Acceso aprobado para ${owner.email}` : `Solicitud rechazada para ${owner.email}`, 'success');
+    } catch (error) {
+      console.error('Owner approval error:', error);
+      showNotification(error.message || 'No se pudo actualizar la solicitud.', 'error');
+    }
+  };
+
+  const pendingOwners = owners.filter(owner => owner.status === 'pending');
+  return <div className="w-full">
+    <div className="p-4 md:p-8 max-w-6xl mx-auto w-full">
+      <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 mb-8">
+        <div><h2 className="text-3xl font-bold text-white mb-2">Administración de Piscimadre</h2><p className="text-slate-400">Aprueba propietarios y supervisa el directorio.</p></div>
+        <div className="flex items-center gap-3"><span className="text-emerald-400 text-sm">Administrador</span><button onClick={onLogout} className="px-4 py-3 rounded-xl border border-slate-600 text-slate-300 hover:bg-slate-800">Cerrar sesión</button></div>
+      </div>
+      <div className="bg-[#1E293B] border border-slate-700 rounded-2xl p-6 mb-8">
+        <div className="flex justify-between items-center gap-3 mb-5"><div><h3 className="text-xl font-bold text-white">Solicitudes de propietarios</h3><p className="text-sm text-slate-400">Solo las cuentas aprobadas pueden publicar piscinas.</p></div><span className="bg-amber-500/15 text-amber-300 rounded-full px-3 py-1 text-sm">{pendingOwners.length} pendientes</span></div>
+        {loadingOwners ? <p className="text-slate-400">Cargando solicitudes…</p> : pendingOwners.length === 0 ? <p className="text-slate-400">No hay solicitudes pendientes.</p> : <div className="space-y-3">{pendingOwners.map(owner => <div key={owner.id} className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 bg-[#0F172A] rounded-xl border border-slate-700"><div><p className="font-semibold text-white">{owner.name || 'Propietario'}</p><p className="text-sm text-slate-400">{owner.email}</p></div><div className="flex gap-2"><button onClick={() => decideOwner(owner, 'rejected')} className="px-4 py-2 rounded-lg border border-rose-500/40 text-rose-300 hover:bg-rose-500/10">Rechazar</button><button onClick={() => decideOwner(owner, 'approved')} className="px-4 py-2 rounded-lg bg-emerald-500 text-slate-950 font-bold hover:bg-emerald-400">Aprobar</button></div></div>)}</div>}
+      </div>
+      <OwnerDashboard user={user} pools={pools} showNotification={showNotification} onLogout={null} isAdmin={true} />
+    </div>
+  </div>;
+}
+
+function OwnerDashboard({ user, pools, showNotification, onLogout, isAdmin = false }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editingPool, setEditingPool] = useState(null);
+  
+  const myPools = isAdmin ? pools : pools.filter(p => p.ownerId === user.uid);
+
+  const handleAddNew = () => {
+    setEditingPool(null);
+    setIsEditing(true);
+  };
+
+  const togglePoolStatus = async (pool) => {
+    try {
+      const poolRef = doc(db, 'artifacts', appId, 'public', 'data', 'pools', pool.id);
+      await updateDoc(poolRef, { isFull: !pool.isFull });
+      showNotification(`Estado actualizado: ${!pool.isFull ? 'Lleno' : 'Disponible'}`, 'success');
+    } catch (err) {
+      console.error(err);
+      showNotification("Error al actualizar estado", "error");
+    }
+  };
+
+  const deletePool = async (id) => {
+    try {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'pools', id));
+      showNotification("Piscina eliminada", "success");
+    } catch(err) {
+      console.error(err);
+      showNotification("Error al eliminar", "error");
+    }
+  }
+
+  if (isEditing) {
+    return <PoolForm 
+             user={user} 
+             pool={editingPool} 
+             onClose={() => setIsEditing(false)} 
+             showNotification={showNotification} 
+           />;
+  }
+
+  return (
+    <div className="p-4 md:p-8 max-w-5xl mx-auto w-full flex-1 overflow-y-auto">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+        <div>
+          <h2 className="text-3xl font-bold text-white mb-2">{isAdmin ? 'Administración de Piscimadre' : 'Panel de Dueños'}</h2>
+          <p className="text-slate-400">{isAdmin ? 'Gestiona todas las piscinas del directorio.' : 'Gestiona tus piscinas, horarios y disponibilidad en tiempo real.'}</p>
+        </div>
+        <div className="flex items-center gap-3">
+        {onLogout && <button onClick={onLogout} className="px-4 py-3 rounded-xl border border-slate-600 text-slate-300 hover:bg-slate-800">Cerrar sesión</button>}
+        <button 
+          onClick={handleAddNew}
+          className="bg-cyan-500 hover:bg-cyan-400 text-slate-900 font-bold py-3 px-6 rounded-xl flex items-center gap-2 shadow-[0_0_20px_rgba(6,182,212,0.3)] transition-all"
+        >
+          <Plus className="w-5 h-5" /> Agregar Piscina
+        </button>
+        </div>
+      </div>
+
+      {myPools.length === 0 ? (
+        <div className="bg-[#1E293B] border border-dashed border-slate-600 rounded-2xl p-12 text-center">
+          <MapPin className="w-16 h-16 text-slate-500 mx-auto mb-4" />
+          <h3 className="text-xl font-bold text-white mb-2">Aún no tienes piscinas</h3>
+          <p className="text-slate-400 mb-6">Agrega tu primera piscina para que aparezca en el mapa público.</p>
+          <button onClick={handleAddNew} className="text-cyan-400 font-semibold hover:underline">Comenzar ahora</button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {myPools.map(pool => (
+            <div key={pool.id} className="bg-[#1E293B] border border-slate-700 rounded-2xl overflow-hidden flex flex-col">
+              <div className="p-5 flex-1">
+                <div className="flex justify-between items-start mb-4">
+                  <h3 className="text-xl font-bold text-white">{pool.name}</h3>
+                  <div className="flex gap-2">
+                    <button onClick={() => { setEditingPool(pool); setIsEditing(true); }} className="p-2 text-slate-400 hover:text-cyan-400 bg-slate-800 rounded-lg">
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => deletePool(pool.id)} className="p-2 text-slate-400 hover:text-rose-400 bg-slate-800 rounded-lg">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                
+                <div className="mt-6 mb-4">
+                  <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-2 text-center">Estado Actual del Local</p>
+                  <button 
+                    onClick={() => togglePoolStatus(pool)}
+                    className={`w-full py-4 rounded-xl font-black text-lg flex items-center justify-center gap-3 transition-all transform active:scale-95 shadow-lg
+                      ${pool.isFull 
+                        ? 'bg-rose-500 text-white border-2 border-rose-400 shadow-rose-500/20' 
+                        : 'bg-emerald-500 text-white border-2 border-emerald-400 shadow-emerald-500/20'}
+                    `}
+                  >
+                    {pool.isFull ? <XCircle className="w-6 h-6" /> : <CheckCircle className="w-6 h-6" />}
+                    {pool.isFull ? 'MARCAR COMO DISPONIBLE' : 'MARCAR COMO LLENO'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PoolForm({ user, pool, onClose, showNotification }) {
+  const [formData, setFormData] = useState({
+    name: pool?.name || '',
+    openTime: pool?.openTime || '09:00',
+    closeTime: pool?.closeTime || '18:00',
+    price: pool?.price || '10',
+    hasFood: pool?.hasFood || false,
+    foodMenu: pool?.foodMenu || '',
+    whatsapp: pool?.whatsapp || '',
+    lat: pool?.lat || null,
+    lng: pool?.lng || null,
+  });
+
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!formData.lat || !formData.lng) {
+      showNotification("Por favor marca la ubicación en el mapa", "error");
+      return;
+    }
+    
+    setSaving(true);
+    try {
+      const poolsRef = collection(db, 'artifacts', appId, 'public', 'data', 'pools');
+      
+      const payload = {
+        ownerId: pool?.ownerId || user.uid,
+        name: formData.name,
+        openTime: formData.openTime,
+        closeTime: formData.closeTime,
+        price: Number(formData.price),
+        hasFood: formData.hasFood,
+        foodMenu: formData.hasFood ? formData.foodMenu : '',
+        whatsapp: formData.whatsapp,
+        lat: formData.lat,
+        lng: formData.lng,
+        isFull: pool ? pool.isFull : false,
+        updatedAt: new Date().toISOString()
+      };
+
+      if (pool && pool.id) {
+        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'pools', pool.id), payload);
+        showNotification("Piscina actualizada correctamente", "success");
+      } else {
+        payload.createdAt = new Date().toISOString();
+        await addDoc(poolsRef, payload);
+        showNotification("Piscina creada correctamente", "success");
+      }
+      onClose();
+    } catch (err) {
+      console.error("Firestore save error:", err);
+      const code = err?.code || "unknown";
+      const messages = {
+        "permission-denied": "Firebase rechazó el guardado. Verifica que tu cuenta esté aprobada y que las reglas de Firestore estén publicadas.",
+        "unauthenticated": "Tu sesión expiró. Vuelve a iniciar sesión.",
+        "unavailable": "Firebase no está disponible temporalmente. Comprueba tu conexión e inténtalo otra vez.",
+        "failed-precondition": "La base de datos necesita revisar su configuración.",
+      };
+      showNotification(messages[code] || `No se pudo guardar (${code}): ${err?.message || "error desconocido"}`, "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="p-4 md:p-8 max-w-6xl mx-auto w-full flex-1 overflow-y-auto">
+      <div className="flex items-center gap-4 mb-6">
+        <button onClick={onClose} className="p-2 bg-[#1E293B] hover:bg-slate-700 rounded-full transition-colors">
+          <X className="w-5 h-5 text-slate-300" />
+        </button>
+        <h2 className="text-2xl font-bold text-white">{pool ? 'Editar Piscina' : 'Nueva Piscina'}</h2>
+      </div>
+
+      <div className="flex flex-col lg:flex-row gap-8 h-auto lg:h-[600px]">
+        <form onSubmit={handleSubmit} className="flex-1 bg-[#1E293B] border border-slate-700 p-6 rounded-2xl shadow-xl overflow-y-auto space-y-5">
+          
+          <div>
+            <label className="block text-sm font-semibold text-slate-300 mb-1">Nombre del Local</label>
+            <input 
+              required
+              type="text" 
+              value={formData.name}
+              onChange={e => setFormData({...formData, name: e.target.value})}
+              className="w-full bg-[#0F172A] border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
+              placeholder="Ej. Recreo El Bosque"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-slate-300 mb-1">Abre a las</label>
+              <input 
+                required
+                type="time" 
+                value={formData.openTime}
+                onChange={e => setFormData({...formData, openTime: e.target.value})}
+                className="w-full bg-[#0F172A] border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-300 mb-1">Cierra a las</label>
+              <input 
+                required
+                type="time" 
+                value={formData.closeTime}
+                onChange={e => setFormData({...formData, closeTime: e.target.value})}
+                className="w-full bg-[#0F172A] border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-slate-300 mb-1">Precio Entrada (S/)</label>
+              <input 
+                required
+                type="number" 
+                min="0"
+                step="0.5"
+                value={formData.price}
+                onChange={e => setFormData({...formData, price: e.target.value})}
+                className="w-full bg-[#0F172A] border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500"
+                placeholder="0 para gratis"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-300 mb-1">WhatsApp (+51)</label>
+              <input 
+                type="tel" 
+                value={formData.whatsapp}
+                onChange={e => setFormData({...formData, whatsapp: e.target.value})}
+                className="w-full bg-[#0F172A] border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500"
+                placeholder="Ej. 987654321"
+              />
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-slate-700">
+            <label className="flex items-center gap-3 cursor-pointer mb-3">
+              <input 
+                type="checkbox" 
+                checked={formData.hasFood}
+                onChange={e => setFormData({...formData, hasFood: e.target.checked})}
+                className="w-5 h-5 rounded bg-[#0F172A] border-slate-600 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-900"
+              />
+              <span className="text-sm font-semibold text-slate-300">Ofrecen platos a la carta / comida</span>
+            </label>
+            
+            {formData.hasFood && (
+              <textarea 
+                value={formData.foodMenu}
+                onChange={e => setFormData({...formData, foodMenu: e.target.value})}
+                className="w-full bg-[#0F172A] border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500 h-24 resize-none"
+                placeholder="Ej. Ceviche, Chicharrón, Gaseosas..."
+              />
+            )}
+          </div>
+
+          <button 
+            type="submit" 
+            disabled={saving}
+            className="w-full bg-cyan-500 hover:bg-cyan-400 text-slate-900 font-bold py-3.5 rounded-xl shadow-lg transition-all disabled:opacity-50"
+          >
+            {saving ? 'Guardando...' : 'Guardar Piscina'}
+          </button>
+        </form>
+
+        <div className="flex-1 bg-[#1E293B] border border-slate-700 p-2 rounded-2xl shadow-xl flex flex-col min-h-[400px]">
+          <div className="p-3 bg-slate-800/50 rounded-t-xl mb-2 flex items-start gap-3">
+            <MapPin className="w-6 h-6 text-cyan-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-white">Ubicación en el mapa</p>
+              <p className="text-xs text-slate-400">Haz clic en el mapa para marcar exactamente dónde está tu piscina.</p>
+            </div>
+          </div>
+          <div className="flex-1 rounded-xl overflow-hidden border border-slate-700 relative">
+            <MapComponent 
+              pools={[]}
+              onMapClick={(coords) => setFormData({...formData, lat: coords[0], lng: coords[1]})}
+              editingPosition={formData.lat ? [formData.lat, formData.lng] : null}
+            />
+            {!formData.lat && (
+              <div className="absolute inset-0 bg-black/40 z-[400] flex items-center justify-center pointer-events-none">
+                <div className="bg-[#1E293B] px-4 py-2 rounded-full border border-cyan-500 text-cyan-400 font-medium animate-pulse shadow-lg">
+                  Toca el mapa para ubicar
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DropletIcon(props) {
+  return (
+    <svg {...props} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"></path>
+    </svg>
+  );
+}
+
+function InstallModal({ onClose }) {
+  return (
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-[#1E293B] border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-xl font-bold text-white flex items-center gap-2">
+            <Smartphone className="w-6 h-6 text-cyan-400" />
+            Instalar App
+          </h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-700 transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        
+        <p className="text-slate-300 text-sm mb-6 leading-relaxed">
+          Para tener <strong>PisciMadre</strong> en tu pantalla de inicio como una aplicación, sigue estos pasos según tu celular:
+        </p>
+
+        <div className="space-y-4">
+          <div className="bg-[#0F172A] p-4 rounded-xl border border-slate-700">
+            <h4 className="font-bold text-emerald-400 mb-2 flex items-center gap-2">🤖 En Android (Chrome)</h4>
+            <ol className="text-sm text-slate-300 space-y-2 list-decimal list-inside ml-1">
+              <li>Toca el menú de <strong>tres puntos</strong> (arriba a la derecha).</li>
+              <li>Selecciona <strong>"Agregar a la pantalla principal"</strong>.</li>
+              <li>Confirma tocando <strong>Agregar</strong>.</li>
+            </ol>
+          </div>
+
+          <div className="bg-[#0F172A] p-4 rounded-xl border border-slate-700">
+            <h4 className="font-bold text-cyan-400 mb-2 flex items-center gap-2">🍎 En iPhone (Safari)</h4>
+            <ol className="text-sm text-slate-300 space-y-2 list-decimal list-inside ml-1">
+              <li>Toca el botón <strong>Compartir</strong> <Share className="w-4 h-4 inline-block mb-1" /> (abajo en el centro).</li>
+              <li>Desliza hacia abajo y toca <strong>"Agregar a inicio"</strong>.</li>
+              <li>Confirma tocando <strong>Agregar</strong>.</li>
+            </ol>
+          </div>
+        </div>
+
+        <button onClick={onClose} className="w-full mt-6 bg-slate-700 hover:bg-slate-600 text-white font-bold py-3.5 rounded-xl transition-colors">
+          Entendido
+        </button>
+      </div>
+    </div>
+  );
+}
