@@ -2,13 +2,12 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, signOut, reload, updateProfile } from 'firebase/auth';
 import { getFirestore, collection, collectionGroup, query, where, doc, addDoc, updateDoc, deleteDoc, onSnapshot, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { 
   MapPin, Map as MapIcon, List, Clock, DollarSign, Utensils, 
   MessageCircle, Plus, Edit2, Trash2, CheckCircle, XCircle, 
   Settings, LogOut, Info, AlertTriangle, Menu, X,
   Download, Smartphone, Share, Mail as MailIcon, Star, ChevronDown, ChevronUp,
-  ChevronLeft, ChevronRight, Navigation, ImagePlus, Camera
+  ChevronLeft, ChevronRight, Navigation
 } from 'lucide-react';
 
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
@@ -17,7 +16,6 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const storage = getStorage(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || '').trim().toLowerCase();
 const OWNER_PROFILES_COLLECTION = 'ownerProfiles';
@@ -421,32 +419,18 @@ function PoolCard({ pool }) {
 
   return (
     <article className="bg-[#1E293B] border border-slate-700 rounded-2xl overflow-hidden shadow-lg hover:border-cyan-500/50 transition-colors">
-      <div className="relative h-48 bg-slate-800">
-        {photos.length > 0 ? (
-          <img
-            src={photos[Math.min(activeImage, photos.length - 1)].url}
-            alt={'Fotografía de ' + pool.name}
-            className="w-full h-full object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <div className="w-full h-full flex flex-col items-center justify-center text-slate-500">
-            <Camera className="w-10 h-10 mb-2 opacity-60" />
-            <span className="text-sm">Este local aún no tiene fotografías</span>
-          </div>
-        )}
-        {photos.length > 1 && (
-          <>
-            <button type="button" aria-label="Fotografía anterior" onClick={() => setActiveImage(index => (index - 1 + photos.length) % photos.length)} className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-slate-950/70 p-2 text-white hover:bg-slate-950">
-              <ChevronLeft className="w-5 h-5" />
-            </button>
-            <button type="button" aria-label="Fotografía siguiente" onClick={() => setActiveImage(index => (index + 1) % photos.length)} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-slate-950/70 p-2 text-white hover:bg-slate-950">
-              <ChevronRight className="w-5 h-5" />
-            </button>
-            <span className="absolute bottom-3 right-3 rounded-full bg-slate-950/75 px-3 py-1 text-xs text-white">{activeImage + 1} / {photos.length}</span>
-          </>
-        )}
-      </div>
+      {photos.length > 0 && (
+        <div className="relative h-48 bg-slate-800">
+          <img src={photos[Math.min(activeImage, photos.length - 1)].url} alt={'Fotografía de ' + pool.name} className="w-full h-full object-cover" loading="lazy" />
+          {photos.length > 1 && (
+            <>
+              <button type="button" aria-label="Fotografía anterior" onClick={() => setActiveImage(index => (index - 1 + photos.length) % photos.length)} className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-slate-950/70 p-2 text-white hover:bg-slate-950"><ChevronLeft className="w-5 h-5" /></button>
+              <button type="button" aria-label="Fotografía siguiente" onClick={() => setActiveImage(index => (index + 1) % photos.length)} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-slate-950/70 p-2 text-white hover:bg-slate-950"><ChevronRight className="w-5 h-5" /></button>
+              <span className="absolute bottom-3 right-3 rounded-full bg-slate-950/75 px-3 py-1 text-xs text-white">{activeImage + 1} / {photos.length}</span>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="p-5">
         <div className="flex justify-between items-start gap-3 mb-3">
@@ -1137,34 +1121,11 @@ function PoolForm({ user, pool, onClose, showNotification }) {
     lat: pool?.lat ?? null,
     lng: pool?.lng ?? null,
   });
-  const [newPhotos, setNewPhotos] = useState([]);
   const [foodItems, setFoodItems] = useState(Array.isArray(pool?.foodItems) ? pool.foodItems.map((item, index) => ({
     ...item,
     id: item.id || String(index),
-    imageFile: null,
-    imagePreview: item.imageUrl || ''
   })) : []);
   const [saving, setSaving] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState('');
-
-  const handlePhotoSelection = event => {
-    const incoming = Array.from(event.target.files || []);
-    const available = Math.max(0, 8 - formData.images.length - newPhotos.length);
-    const accepted = incoming.filter(file => file.type.startsWith('image/') && file.size <= 8 * 1024 * 1024).slice(0, available);
-    if (accepted.length !== incoming.length) {
-      showNotification('Puedes subir hasta 8 imágenes, de máximo 8 MB cada una (JPG, PNG o WebP).', 'error');
-    }
-    setNewPhotos(current => current.concat(accepted.map(file => ({ file, preview: URL.createObjectURL(file) }))));
-    event.target.value = '';
-  };
-
-  const removeNewPhoto = index => {
-    setNewPhotos(current => {
-      const target = current[index];
-      if (target?.preview) URL.revokeObjectURL(target.preview);
-      return current.filter((_, currentIndex) => currentIndex !== index);
-    });
-  };
 
   const updateFoodItem = (id, changes) => {
     setFoodItems(current => current.map(item => item.id === id ? { ...item, ...changes } : item));
@@ -1178,9 +1139,7 @@ function PoolForm({ user, pool, onClose, showNotification }) {
       description: '',
       price: '',
       imageUrl: '',
-      imagePath: '',
-      imageFile: null,
-      imagePreview: ''
+      imagePath: ''
     }]));
   };
 
@@ -1192,60 +1151,26 @@ function PoolForm({ user, pool, onClose, showNotification }) {
     });
   };
 
-  const chooseFoodImage = (id, event) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-    if (!file.type.startsWith('image/') || file.size > 8 * 1024 * 1024) {
-      showNotification('La foto debe ser JPG, PNG o WebP y pesar como máximo 8 MB.', 'error');
-      return;
-    }
-    const current = foodItems.find(item => item.id === id);
-    if (current?.imagePreview?.startsWith('blob:')) URL.revokeObjectURL(current.imagePreview);
-    updateFoodItem(id, { imageFile: file, imagePreview: URL.createObjectURL(file) });
-  };
-
-  const uploadImage = async (file, folder, poolId) => {
-    const safeName = file.name.toLowerCase().replace(/[^a-z0-9._-]/g, '-');
-    const path = folder + '/' + user.uid + '/' + poolId + '/' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '-' + safeName;
-    const imageRef = storageRef(storage, path);
-    await uploadBytes(imageRef, file, { contentType: file.type });
-    return { url: await getDownloadURL(imageRef), path };
-  };
-
   const handleSubmit = async event => {
     event.preventDefault();
     if (!formData.lat || !formData.lng) {
       showNotification('Por favor marca la ubicación en el mapa', 'error');
       return;
     }
-    if (formData.images.length + newPhotos.length > 8) {
-      showNotification('Cada establecimiento puede tener hasta 8 fotografías.', 'error');
-      return;
-    }
-
     setSaving(true);
     try {
       const poolsRef = collection(db, 'artifacts', appId, 'public', 'data', 'pools');
       const targetRef = pool?.id ? doc(db, 'artifacts', appId, 'public', 'data', 'pools', pool.id) : doc(poolsRef);
       const poolId = targetRef.id;
-      const uploaderId = user.uid;
-
-      setUploadProgress('Subiendo fotografías…');
-      const uploadedPhotos = await Promise.all(newPhotos.map(photo => uploadImage(photo.file, 'poolPhotos', poolId)));
-      const savedFoodItems = formData.hasFood ? await Promise.all(foodItems.filter(item => item.name.trim()).map(async item => {
-        const uploaded = item.imageFile ? await uploadImage(item.imageFile, 'menuPhotos', poolId) : null;
-        return {
+      const savedFoodItems = formData.hasFood ? foodItems.filter(item => item.name.trim()).map(item => ({
           name: item.name.trim().slice(0, 80),
           category: item.category || 'Otros',
           description: (item.description || '').trim().slice(0, 240),
           price: item.price === '' ? null : Number(item.price),
-          imageUrl: uploaded?.url || item.imageUrl || '',
-          imagePath: uploaded?.path || item.imagePath || ''
-        };
+          imageUrl: item.imageUrl || '',
+          imagePath: item.imagePath || ''
       })) : [];
 
-      setUploadProgress('Guardando información…');
       const payload = {
         ownerId: pool?.ownerId || user.uid,
         name: formData.name.trim(),
@@ -1257,7 +1182,7 @@ function PoolForm({ user, pool, onClose, showNotification }) {
         hasFood: formData.hasFood,
         foodMenu: formData.hasFood ? formData.foodMenu.trim() : '',
         foodItems: savedFoodItems,
-        images: formData.images.concat(uploadedPhotos),
+        images: formData.images,
         whatsapp: formData.whatsapp.trim(),
         lat: formData.lat,
         lng: formData.lng,
@@ -1277,15 +1202,12 @@ function PoolForm({ user, pool, onClose, showNotification }) {
       console.error('Firebase save error:', error);
       const code = error?.code || 'unknown';
       const messages = {
-        'storage/unauthorized': 'Firebase Storage rechazó la subida. Revisa las reglas del archivo storage.rules.',
-        'storage/bucket-not-found': 'No se encontró el bucket de Firebase Storage. Actívalo en tu proyecto Firebase.',
         'permission-denied': 'Firebase rechazó el guardado. Revisa las reglas de Firestore y que tu cuenta esté aprobada.',
         'unauthenticated': 'Tu sesión expiró. Vuelve a iniciar sesión.',
         'unavailable': 'Firebase no está disponible temporalmente. Comprueba tu conexión e inténtalo otra vez.'
       };
       showNotification(messages[code] || ('No se pudo guardar: ' + (error?.message || 'error desconocido')), 'error');
     } finally {
-      setUploadProgress('');
       setSaving(false);
     }
   };
@@ -1350,38 +1272,6 @@ function PoolForm({ user, pool, onClose, showNotification }) {
           </div>
 
           <section className="border-t border-slate-700 pt-5">
-            <div className="flex items-center justify-between gap-3 mb-3">
-              <div>
-                <h3 className="font-bold text-white flex items-center gap-2"><ImagePlus className="w-5 h-5 text-cyan-400" /> Fotografías del lugar</h3>
-                <p className="text-xs text-slate-400 mt-1">Hasta 8 imágenes, máximo 8 MB cada una.</p>
-              </div>
-              <span className="text-xs text-slate-400">{formData.images.length + newPhotos.length}/8</span>
-            </div>
-            <label className="flex items-center justify-center gap-2 border border-dashed border-cyan-500/50 rounded-xl p-4 text-cyan-300 hover:bg-cyan-500/10 cursor-pointer">
-              <Camera className="w-5 h-5" /> Seleccionar fotografías
-              <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple onChange={handlePhotoSelection} className="hidden" />
-            </label>
-            {(formData.images.length > 0 || newPhotos.length > 0) && (
-              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 mt-3">
-                {formData.images.map((photo, index) => (
-                  <div key={photo.path || photo.url || index} className="relative aspect-square">
-                    <img src={photo.url} alt={'Foto ' + (index + 1)} className="w-full h-full object-cover rounded-lg" />
-                    <button type="button" onClick={() => setFormData(current => ({ ...current, images: current.images.filter((_, photoIndex) => photoIndex !== index) }))} className="absolute top-1 right-1 rounded-full bg-slate-950/80 text-white p-1" aria-label="Quitar fotografía"><X className="w-3 h-3" /></button>
-                    {index === 0 && <span className="absolute bottom-1 left-1 rounded bg-slate-950/80 px-1.5 py-0.5 text-[10px] text-white">Portada</span>}
-                  </div>
-                ))}
-                {newPhotos.map((photo, index) => (
-                  <div key={photo.preview} className="relative aspect-square">
-                    <img src={photo.preview} alt="Nueva fotografía" className="w-full h-full object-cover rounded-lg" />
-                    <button type="button" onClick={() => removeNewPhoto(index)} className="absolute top-1 right-1 rounded-full bg-slate-950/80 text-white p-1" aria-label="Quitar fotografía"><X className="w-3 h-3" /></button>
-                    {formData.images.length === 0 && index === 0 && <span className="absolute bottom-1 left-1 rounded bg-slate-950/80 px-1.5 py-0.5 text-[10px] text-white">Portada</span>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section className="border-t border-slate-700 pt-5">
             <label className="flex items-center gap-3 cursor-pointer mb-3">
               <input type="checkbox" checked={formData.hasFood} onChange={event => setFormData({ ...formData, hasFood: event.target.checked })} className="w-5 h-5 accent-cyan-500" />
               <span className="text-sm font-semibold text-slate-300">Este establecimiento ofrece comida</span>
@@ -1391,7 +1281,7 @@ function PoolForm({ user, pool, onClose, showNotification }) {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h3 className="font-bold text-white">Carta de comidas</h3>
-                    <p className="text-xs text-slate-400">Agrega cada plato con su categoría, precio y foto.</p>
+                    <p className="text-xs text-slate-400">Agrega cada plato con su categoría y precio.</p>
                   </div>
                   <button type="button" onClick={addFoodItem} className="flex items-center gap-2 rounded-lg bg-cyan-500/15 text-cyan-300 px-3 py-2 text-sm font-semibold hover:bg-cyan-500/25"><Plus className="w-4 h-4" /> Agregar plato</button>
                 </div>
@@ -1410,13 +1300,6 @@ function PoolForm({ user, pool, onClose, showNotification }) {
                       <input type="number" min="0" step="0.5" value={item.price ?? ''} onChange={event => updateFoodItem(item.id, { price: event.target.value })} placeholder="Precio S/" className={inputClass} />
                     </div>
                     <textarea value={item.description || ''} onChange={event => updateFoodItem(item.id, { description: event.target.value })} maxLength={240} rows={2} placeholder="Descripción breve del plato" className={inputClass + ' resize-y'} />
-                    <div className="flex items-center gap-3">
-                      <label className="inline-flex items-center gap-2 rounded-lg border border-slate-600 px-3 py-2 text-xs text-cyan-300 cursor-pointer hover:bg-slate-800">
-                        <Camera className="w-4 h-4" /> Foto del plato
-                        <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={event => chooseFoodImage(item.id, event)} className="hidden" />
-                      </label>
-                      {item.imagePreview && <img src={item.imagePreview} alt="Vista previa del plato" className="w-14 h-14 object-cover rounded-lg" />}
-                    </div>
                   </div>
                 ))}
                 <div>
@@ -1428,7 +1311,7 @@ function PoolForm({ user, pool, onClose, showNotification }) {
           </section>
 
           <button type="submit" disabled={saving} className="w-full bg-cyan-500 hover:bg-cyan-400 text-slate-900 font-bold py-3.5 rounded-xl shadow-lg transition-all disabled:opacity-50">
-            {saving ? (uploadProgress || 'Guardando…') : 'Guardar establecimiento'}
+            {saving ? 'Guardando…' : 'Guardar establecimiento'}
           </button>
         </form>
 
