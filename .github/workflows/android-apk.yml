@@ -3,11 +3,15 @@ name: Build Piscimadre APK
 on:
   push:
     branches:
-      - codex/android-apk
+      - main
+      - codex/apk-download-button
+    paths:
+      - "android/**"
+      - ".github/workflows/android-apk.yml"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-apk:
@@ -37,10 +41,22 @@ jobs:
       - name: Build installable APK
         run: gradle --no-daemon --project-dir android assembleDebug
 
-      - name: Save APK for download
+      - name: Save APK for run download
         uses: actions/upload-artifact@v4
         with:
           name: piscimadre-android-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish APK for the website download button
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: android-v1.0.0
+          target_commitish: ${{ github.sha }}
+          name: Piscimadre Android 1.0.0
+          body: Descarga e instala la app Android de Piscimadre. Necesita internet para mostrar los datos y el mapa.
+          files: android/app/build/outputs/apk/debug/app-debug.apk
+          overwrite_files: true
+          make_latest: false
