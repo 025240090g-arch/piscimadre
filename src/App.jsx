@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, signOut, reload, updateProfile } from 'firebase/auth';
-import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, collectionGroup, query, where, doc, addDoc, updateDoc, deleteDoc, onSnapshot, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { 
   MapPin, Map as MapIcon, List, Clock, DollarSign, Utensils, 
   MessageCircle, Plus, Edit2, Trash2, CheckCircle, XCircle, 
   Settings, LogOut, Info, AlertTriangle, Menu, X,
-  Download, Smartphone, Share, Mail as MailIcon
+  Download, Smartphone, Share, Mail as MailIcon, Star, ChevronDown, ChevronUp,
+  ChevronLeft, ChevronRight, Navigation
 } from 'lucide-react';
 
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
@@ -400,55 +401,227 @@ function FilterChip({ active, onClick, icon, label }) {
 }
 
 function PoolCard({ pool }) {
+  const [activeImage, setActiveImage] = useState(0);
+  const photos = Array.isArray(pool.images)
+    ? pool.images.map(photo => typeof photo === 'string' ? { url: photo } : photo).filter(photo => photo && photo.url)
+    : [];
+  const foodItems = Array.isArray(pool.foodItems) ? pool.foodItems.filter(item => item && item.name) : [];
+  const categories = Array.from(new Set(foodItems.map(item => item.category || 'Otros')));
+  const mapsUrl = pool.lat != null && pool.lng != null
+    ? 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(pool.lat + ',' + pool.lng) + '&travelmode=driving'
+    : '';
+
   const formatWhatsapp = (num) => {
-    let clean = num.replace(/\D/g, '');
-    if (clean.length === 9) clean = `51${clean}`;
-    return `https://wa.me/${clean}`;
+    let clean = String(num || '').replace(/\D/g, '');
+    if (clean.length === 9) clean = '51' + clean;
+    return 'https://wa.me/' + clean;
   };
 
   return (
-    <div className="bg-[#1E293B] border border-slate-700 rounded-2xl overflow-hidden shadow-lg hover:border-cyan-500/50 transition-colors">
+    <article className="bg-[#1E293B] border border-slate-700 rounded-2xl overflow-hidden shadow-lg hover:border-cyan-500/50 transition-colors">
+      {photos.length > 0 && (
+        <div className="relative h-48 bg-slate-800">
+          <img src={photos[Math.min(activeImage, photos.length - 1)].url} alt={'Fotografía de ' + pool.name} className="w-full h-full object-cover" loading="lazy" />
+          {photos.length > 1 && (
+            <>
+              <button type="button" aria-label="Fotografía anterior" onClick={() => setActiveImage(index => (index - 1 + photos.length) % photos.length)} className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-slate-950/70 p-2 text-white hover:bg-slate-950"><ChevronLeft className="w-5 h-5" /></button>
+              <button type="button" aria-label="Fotografía siguiente" onClick={() => setActiveImage(index => (index + 1) % photos.length)} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-slate-950/70 p-2 text-white hover:bg-slate-950"><ChevronRight className="w-5 h-5" /></button>
+              <span className="absolute bottom-3 right-3 rounded-full bg-slate-950/75 px-3 py-1 text-xs text-white">{activeImage + 1} / {photos.length}</span>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="p-5">
-        <div className="flex justify-between items-start mb-3">
+        <div className="flex justify-between items-start gap-3 mb-3">
           <h3 className="text-xl font-bold text-white leading-tight">{pool.name}</h3>
-          <div className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide flex items-center gap-1 ${pool.isFull ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'}`}>
-            <span className={`w-2 h-2 rounded-full ${pool.isFull ? 'bg-rose-500' : 'bg-emerald-500 animate-pulse'}`}></span>
+          <div className={'shrink-0 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide flex items-center gap-1 ' + (pool.isFull ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30')}>
+            <span className={'w-2 h-2 rounded-full ' + (pool.isFull ? 'bg-rose-500' : 'bg-emerald-500 animate-pulse')}></span>
             {pool.isFull ? 'Lleno' : 'Disponible'}
           </div>
         </div>
 
+        <div className="flex flex-wrap gap-2 mb-4">
+          <span className="rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 px-3 py-1 text-xs font-semibold">
+            {pool.venueType === 'quebrada' ? 'Quebrada' : 'Piscina'}
+          </span>
+          {pool.hasKidsPool && (
+            <span className="rounded-full bg-violet-500/15 border border-violet-500/30 text-violet-300 px-3 py-1 text-xs font-semibold">
+              Piscina para niños
+            </span>
+          )}
+        </div>
+
         <div className="grid grid-cols-2 gap-3 mb-4 text-sm text-slate-300">
           <div className="flex items-center gap-2">
-            <Clock className="w-4 h-4 text-cyan-400" />
+            <Clock className="w-4 h-4 text-cyan-400 shrink-0" />
             <span>{pool.openTime} - {pool.closeTime}</span>
           </div>
           <div className="flex items-center gap-2">
-            <DollarSign className="w-4 h-4 text-emerald-400" />
-            <span className="font-semibold">{Number(pool.price) === 0 ? 'Gratis' : `S/ ${pool.price}`}</span>
+            <DollarSign className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="font-semibold">{Number(pool.price) === 0 ? 'Gratis' : 'S/ ' + pool.price}</span>
           </div>
         </div>
 
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
+          {mapsUrl && (
+            <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="w-full bg-cyan-600 hover:bg-cyan-500 text-white py-2.5 rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors">
+              <Navigation className="w-5 h-5" /> Cómo llegar
+            </a>
+          )}
+          {pool.whatsapp && (
+            <a href={formatWhatsapp(pool.whatsapp)} target="_blank" rel="noopener noreferrer" className="w-full bg-[#25D366] hover:bg-[#1EBE5D] text-white py-2.5 rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors">
+              <MessageCircle className="w-5 h-5" /> WhatsApp
+            </a>
+          )}
+        </div>
+
         {pool.hasFood && (
-          <div className="mb-4 bg-slate-800/50 p-3 rounded-lg border border-slate-700/50">
-            <div className="flex items-center gap-2 mb-1 text-teal-400 font-medium text-sm">
-              <Utensils className="w-4 h-4" /> Ofrecen Comida
+          <details className="mb-4 bg-slate-800/60 rounded-xl border border-slate-700 overflow-hidden">
+            <summary className="cursor-pointer list-none p-3 flex items-center justify-between gap-3 text-teal-300 font-semibold">
+              <span className="flex items-center gap-2"><Utensils className="w-4 h-4" /> Menú y comidas</span>
+              <ChevronDown className="w-4 h-4" />
+            </summary>
+            <div className="px-3 pb-3 space-y-4">
+              {foodItems.length > 0 ? categories.map(category => (
+                <section key={category}>
+                  <h4 className="text-sm font-bold uppercase tracking-wide text-cyan-300 mb-2">{category}</h4>
+                  <div className="space-y-3">
+                    {foodItems.filter(item => (item.category || 'Otros') === category).map((item, index) => (
+                      <div key={item.id || category + index} className="flex gap-3 border-b border-slate-700/70 pb-3 last:border-0">
+                        {item.imageUrl ? <img src={item.imageUrl} alt={item.name} className="w-20 h-20 rounded-lg object-cover shrink-0" loading="lazy" /> : null}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex justify-between items-start gap-2">
+                            <p className="font-semibold text-white">{item.name}</p>
+                            {item.price !== '' && item.price != null && <span className="text-emerald-300 text-sm font-bold shrink-0">S/ {Number(item.price).toFixed(2)}</span>}
+                          </div>
+                          {item.description && <p className="text-xs text-slate-400 mt-1">{item.description}</p>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )) : (
+                <p className="text-sm text-slate-400">{pool.foodMenu || 'El establecimiento todavía no ha agregado platos a su menú.'}</p>
+              )}
+              {foodItems.length > 0 && pool.foodMenu && <p className="text-xs text-slate-500 border-t border-slate-700 pt-2">{pool.foodMenu}</p>}
             </div>
-            {pool.foodMenu && <p className="text-xs text-slate-400 italic mt-1 line-clamp-2">{pool.foodMenu}</p>}
-          </div>
+          </details>
         )}
 
-        {pool.whatsapp && (
-          <a 
-            href={formatWhatsapp(pool.whatsapp)} 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="w-full bg-[#25D366] hover:bg-[#1EBE5D] text-white py-2.5 rounded-xl font-semibold flex items-center justify-center gap-2 transition-transform active:scale-95"
-          >
-            <MessageCircle className="w-5 h-5" /> Contactar por WhatsApp
-          </a>
-        )}
+        <PoolReviews poolId={pool.id} />
       </div>
-    </div>
+    </article>
+  );
+}
+
+function PoolReviews({ poolId }) {
+  const [reviews, setReviews] = useState([]);
+  const [loadingReviews, setLoadingReviews] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+  const [displayName, setDisplayName] = useState('');
+  const [rating, setRating] = useState(5);
+  const [comment, setComment] = useState('');
+  const [sending, setSending] = useState(false);
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    const reviewsRef = collection(db, 'artifacts', appId, 'public', 'data', 'pools', poolId, 'reviews');
+    const approvedReviews = query(reviewsRef, where('status', '==', 'approved'));
+    const unsubscribe = onSnapshot(approvedReviews, snapshot => {
+      const nextReviews = snapshot.docs.map(reviewDoc => ({ id: reviewDoc.id, ...reviewDoc.data() }));
+      nextReviews.sort((a, b) => {
+        const aTime = a.createdAt && a.createdAt.toMillis ? a.createdAt.toMillis() : 0;
+        const bTime = b.createdAt && b.createdAt.toMillis ? b.createdAt.toMillis() : 0;
+        return bTime - aTime;
+      });
+      setReviews(nextReviews.slice(0, 10));
+      setLoadingReviews(false);
+    }, error => {
+      console.error('Pool reviews listener error:', error);
+      setLoadingReviews(false);
+    });
+    return () => unsubscribe();
+  }, [poolId]);
+
+  const average = reviews.length ? reviews.reduce((total, review) => total + Number(review.rating || 0), 0) / reviews.length : 0;
+
+  const submitReview = async event => {
+    event.preventDefault();
+    if (!auth.currentUser) {
+      setNotice('No se detectó una sesión. Recarga la página e inténtalo nuevamente.');
+      return;
+    }
+    if (!displayName.trim() || comment.trim().length < 3) {
+      setNotice('Escribe tu nombre y un comentario de al menos 3 caracteres.');
+      return;
+    }
+    setSending(true);
+    setNotice('');
+    try {
+      const reviewsRef = collection(db, 'artifacts', appId, 'public', 'data', 'pools', poolId, 'reviews');
+      await addDoc(reviewsRef, {
+        displayName: displayName.trim().slice(0, 60),
+        userId: auth.currentUser.uid,
+        rating,
+        comment: comment.trim().slice(0, 500),
+        status: 'pending',
+        createdAt: serverTimestamp()
+      });
+      setComment('');
+      setRating(5);
+      setNotice('¡Gracias! Tu opinión quedó pendiente de revisión antes de publicarse.');
+    } catch (error) {
+      console.error('Review submit error:', error);
+      setNotice('No se pudo enviar la opinión. Revisa la configuración de reglas de Firebase.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <section className="border-t border-slate-700 pt-3">
+      <button type="button" onClick={() => setExpanded(value => !value)} className="w-full flex items-center justify-between text-left">
+        <span className="font-semibold text-white flex items-center gap-2">
+          <Star className="w-4 h-4 text-amber-400" />
+          Opiniones {reviews.length > 0 ? '(' + reviews.length + ')' : ''}
+          {reviews.length > 0 && <span className="text-amber-300 text-sm">{average.toFixed(1)} / 5</span>}
+        </span>
+        {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+      </button>
+      {expanded && (
+        <div className="mt-3 space-y-4">
+          {loadingReviews ? <p className="text-xs text-slate-400">Cargando opiniones…</p> : reviews.length === 0 ? <p className="text-sm text-slate-400">Todavía no hay opiniones publicadas. ¡Sé la primera persona en opinar!</p> : (
+            <div className="space-y-3">
+              {reviews.map(review => (
+                <article key={review.id} className="bg-slate-800/60 rounded-xl p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-semibold text-white text-sm">{review.displayName}</p>
+                    <span className="text-amber-300 text-xs">{'★'.repeat(Math.max(0, Math.min(5, Number(review.rating) || 0)))}{'☆'.repeat(5 - Math.max(0, Math.min(5, Number(review.rating) || 0)))}</span>
+                  </div>
+                  <p className="text-sm text-slate-300 mt-2">{review.comment}</p>
+                </article>
+              ))}
+            </div>
+          )}
+          <form onSubmit={submitReview} className="bg-slate-800/50 rounded-xl p-3 space-y-3">
+            <p className="text-sm font-semibold text-white">Comparte tu experiencia</p>
+            <input value={displayName} onChange={event => setDisplayName(event.target.value)} required maxLength={60} placeholder="Tu nombre" className="w-full bg-[#0F172A] border border-slate-600 rounded-lg px-3 py-2 text-sm text-white" />
+            <div className="flex items-center gap-1" aria-label="Calificación">
+              {[1, 2, 3, 4, 5].map(value => (
+                <button key={value} type="button" aria-label={'Calificar con ' + value + ' estrellas'} onClick={() => setRating(value)} className="p-1">
+                  <Star className={'w-5 h-5 ' + (value <= rating ? 'text-amber-400 fill-amber-400' : 'text-slate-500')} />
+                </button>
+              ))}
+            </div>
+            <textarea value={comment} onChange={event => setComment(event.target.value)} required minLength={3} maxLength={500} rows={3} placeholder="¿Qué tal fue tu visita?" className="w-full bg-[#0F172A] border border-slate-600 rounded-lg px-3 py-2 text-sm text-white resize-y" />
+            <button disabled={sending} className="w-full rounded-lg bg-cyan-500 hover:bg-cyan-400 disabled:opacity-60 text-slate-950 font-bold py-2.5 text-sm">{sending ? 'Enviando…' : 'Enviar opinión'}</button>
+            {notice && <p className="text-xs text-slate-400" role="status">{notice}</p>}
+            <p className="text-[11px] text-slate-500">Las opiniones se publican después de una revisión para evitar spam.</p>
+          </form>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -684,14 +857,35 @@ function OwnerProfileError({ message, onLogout }) {
 function AdminDashboard({ user, pools, showNotification, onLogout }) {
   const [owners, setOwners] = useState([]);
   const [loadingOwners, setLoadingOwners] = useState(true);
+  const [pendingReviews, setPendingReviews] = useState([]);
+  const [loadingReviews, setLoadingReviews] = useState(true);
+
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, OWNER_PROFILES_COLLECTION), (snapshot) => {
+    const unsubscribe = onSnapshot(collection(db, OWNER_PROFILES_COLLECTION), snapshot => {
       setOwners(snapshot.docs.map(ownerDoc => ({ id: ownerDoc.id, ...ownerDoc.data() })));
       setLoadingOwners(false);
-    }, (error) => {
+    }, error => {
       console.error('Admin owner list error:', error);
       showNotification('No se pudieron cargar las solicitudes de propietarios.', 'error');
       setLoadingOwners(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const pendingQuery = query(collectionGroup(db, 'reviews'), where('status', '==', 'pending'));
+    const unsubscribe = onSnapshot(pendingQuery, snapshot => {
+      setPendingReviews(snapshot.docs.map(reviewDoc => ({
+        id: reviewDoc.id,
+        ref: reviewDoc.ref,
+        poolId: reviewDoc.ref.parent.parent ? reviewDoc.ref.parent.parent.id : '',
+        ...reviewDoc.data()
+      })));
+      setLoadingReviews(false);
+    }, error => {
+      console.error('Admin pending reviews listener error:', error);
+      setLoadingReviews(false);
+      showNotification('No se pudieron cargar las opiniones pendientes. Revisa las reglas de Firestore.', 'error');
     });
     return () => unsubscribe();
   }, []);
@@ -703,27 +897,105 @@ function AdminDashboard({ user, pools, showNotification, onLogout }) {
         reviewedAt: serverTimestamp(),
         reviewedBy: user.email,
       });
-      showNotification(status === 'approved' ? `Acceso aprobado para ${owner.email}` : `Solicitud rechazada para ${owner.email}`, 'success');
+      showNotification(status === 'approved' ? 'Acceso aprobado para ' + owner.email : 'Solicitud rechazada para ' + owner.email, 'success');
     } catch (error) {
       console.error('Owner approval error:', error);
       showNotification(error.message || 'No se pudo actualizar la solicitud.', 'error');
     }
   };
 
+  const decideReview = async (review, status) => {
+    try {
+      await updateDoc(review.ref, {
+        status,
+        reviewedAt: serverTimestamp(),
+        reviewedBy: user.email
+      });
+      showNotification(status === 'approved' ? 'Opinión publicada.' : 'Opinión rechazada.', 'success');
+    } catch (error) {
+      console.error('Review moderation error:', error);
+      showNotification('No se pudo moderar la opinión. Revisa las reglas de Firestore.', 'error');
+    }
+  };
+
   const pendingOwners = owners.filter(owner => owner.status === 'pending');
-  return <div className="w-full">
-    <div className="p-4 md:p-8 max-w-6xl mx-auto w-full">
-      <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 mb-8">
-        <div><h2 className="text-3xl font-bold text-white mb-2">Administración de Piscimadre</h2><p className="text-slate-400">Aprueba propietarios y supervisa el directorio.</p></div>
-        <div className="flex items-center gap-3"><span className="text-emerald-400 text-sm">Administrador</span><button onClick={onLogout} className="px-4 py-3 rounded-xl border border-slate-600 text-slate-300 hover:bg-slate-800">Cerrar sesión</button></div>
+
+  return (
+    <div className="w-full">
+      <div className="p-4 md:p-8 max-w-6xl mx-auto w-full">
+        <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 mb-8">
+          <div>
+            <h2 className="text-3xl font-bold text-white mb-2">Administración de Piscimadre</h2>
+            <p className="text-slate-400">Aprueba propietarios, revisa opiniones y supervisa el directorio.</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-emerald-400 text-sm">Administrador</span>
+            <button onClick={onLogout} className="px-4 py-3 rounded-xl border border-slate-600 text-slate-300 hover:bg-slate-800">Cerrar sesión</button>
+          </div>
+        </div>
+
+        <div className="bg-[#1E293B] border border-slate-700 rounded-2xl p-6 mb-8">
+          <div className="flex justify-between items-center gap-3 mb-5">
+            <div>
+              <h3 className="text-xl font-bold text-white">Solicitudes de propietarios</h3>
+              <p className="text-sm text-slate-400">Solo las cuentas aprobadas pueden publicar piscinas.</p>
+            </div>
+            <span className="bg-amber-500/15 text-amber-300 rounded-full px-3 py-1 text-sm">{pendingOwners.length} pendientes</span>
+          </div>
+          {loadingOwners ? <p className="text-slate-400">Cargando solicitudes…</p> : pendingOwners.length === 0 ? <p className="text-slate-400">No hay solicitudes pendientes.</p> : (
+            <div className="space-y-3">
+              {pendingOwners.map(owner => (
+                <div key={owner.id} className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 bg-[#0F172A] rounded-xl border border-slate-700">
+                  <div>
+                    <p className="font-semibold text-white">{owner.name || 'Propietario'}</p>
+                    <p className="text-sm text-slate-400">{owner.email}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => decideOwner(owner, 'rejected')} className="px-4 py-2 rounded-lg border border-rose-500/40 text-rose-300 hover:bg-rose-500/10">Rechazar</button>
+                    <button onClick={() => decideOwner(owner, 'approved')} className="px-4 py-2 rounded-lg bg-emerald-500 text-slate-950 font-bold hover:bg-emerald-400">Aprobar</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="bg-[#1E293B] border border-slate-700 rounded-2xl p-6 mb-8">
+          <div className="flex justify-between items-center gap-3 mb-5">
+            <div>
+              <h3 className="text-xl font-bold text-white">Opiniones por revisar</h3>
+              <p className="text-sm text-slate-400">Las opiniones solo aparecen en el directorio después de aprobarlas.</p>
+            </div>
+            <span className="bg-amber-500/15 text-amber-300 rounded-full px-3 py-1 text-sm">{pendingReviews.length} pendientes</span>
+          </div>
+          {loadingReviews ? <p className="text-slate-400">Cargando opiniones…</p> : pendingReviews.length === 0 ? <p className="text-slate-400">No hay opiniones pendientes.</p> : (
+            <div className="space-y-3">
+              {pendingReviews.map(review => {
+                const pool = pools.find(item => item.id === review.poolId);
+                return (
+                  <div key={review.id} className="p-4 bg-[#0F172A] rounded-xl border border-slate-700">
+                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-white">{review.displayName || 'Visitante'} · {pool ? pool.name : 'Piscina'}</p>
+                        <p className="text-amber-300 text-sm">{'★'.repeat(Math.max(0, Math.min(5, Number(review.rating) || 0)))}{'☆'.repeat(5 - Math.max(0, Math.min(5, Number(review.rating) || 0)))}</p>
+                        <p className="text-sm text-slate-300 mt-2 break-words">{review.comment}</p>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <button onClick={() => decideReview(review, 'rejected')} className="px-4 py-2 rounded-lg border border-rose-500/40 text-rose-300 hover:bg-rose-500/10">Rechazar</button>
+                        <button onClick={() => decideReview(review, 'approved')} className="px-4 py-2 rounded-lg bg-emerald-500 text-slate-950 font-bold hover:bg-emerald-400">Publicar</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <OwnerDashboard user={user} pools={pools} showNotification={showNotification} onLogout={null} isAdmin={true} />
       </div>
-      <div className="bg-[#1E293B] border border-slate-700 rounded-2xl p-6 mb-8">
-        <div className="flex justify-between items-center gap-3 mb-5"><div><h3 className="text-xl font-bold text-white">Solicitudes de propietarios</h3><p className="text-sm text-slate-400">Solo las cuentas aprobadas pueden publicar piscinas.</p></div><span className="bg-amber-500/15 text-amber-300 rounded-full px-3 py-1 text-sm">{pendingOwners.length} pendientes</span></div>
-        {loadingOwners ? <p className="text-slate-400">Cargando solicitudes…</p> : pendingOwners.length === 0 ? <p className="text-slate-400">No hay solicitudes pendientes.</p> : <div className="space-y-3">{pendingOwners.map(owner => <div key={owner.id} className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 bg-[#0F172A] rounded-xl border border-slate-700"><div><p className="font-semibold text-white">{owner.name || 'Propietario'}</p><p className="text-sm text-slate-400">{owner.email}</p></div><div className="flex gap-2"><button onClick={() => decideOwner(owner, 'rejected')} className="px-4 py-2 rounded-lg border border-rose-500/40 text-rose-300 hover:bg-rose-500/10">Rechazar</button><button onClick={() => decideOwner(owner, 'approved')} className="px-4 py-2 rounded-lg bg-emerald-500 text-slate-950 font-bold hover:bg-emerald-400">Aprobar</button></div></div>)}</div>}
-      </div>
-      <OwnerDashboard user={user} pools={pools} showNotification={showNotification} onLogout={null} isAdmin={true} />
     </div>
-  </div>;
+  );
 }
 
 function OwnerDashboard({ user, pools, showNotification, onLogout, isAdmin = false }) {
@@ -833,65 +1105,108 @@ function OwnerDashboard({ user, pools, showNotification, onLogout, isAdmin = fal
 }
 
 function PoolForm({ user, pool, onClose, showNotification }) {
+  const inputClass = "w-full bg-[#0F172A] border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500";
+  const categories = ['Platos regionales', 'Pescados', 'Parrillas', 'Postres', 'Bebidas', 'Otros'];
   const [formData, setFormData] = useState({
     name: pool?.name || '',
+    venueType: pool?.venueType || 'pool',
+    hasKidsPool: pool?.hasKidsPool || false,
     openTime: pool?.openTime || '09:00',
     closeTime: pool?.closeTime || '18:00',
-    price: pool?.price || '10',
+    price: pool?.price != null ? String(pool.price) : '10',
     hasFood: pool?.hasFood || false,
     foodMenu: pool?.foodMenu || '',
+    images: Array.isArray(pool?.images) ? pool.images.map(photo => typeof photo === 'string' ? { url: photo } : photo).filter(photo => photo && photo.url) : [],
     whatsapp: pool?.whatsapp || '',
-    lat: pool?.lat || null,
-    lng: pool?.lng || null,
+    lat: pool?.lat ?? null,
+    lng: pool?.lng ?? null,
   });
-
+  const [foodItems, setFoodItems] = useState(Array.isArray(pool?.foodItems) ? pool.foodItems.map((item, index) => ({
+    ...item,
+    id: item.id || String(index),
+  })) : []);
   const [saving, setSaving] = useState(false);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const updateFoodItem = (id, changes) => {
+    setFoodItems(current => current.map(item => item.id === id ? { ...item, ...changes } : item));
+  };
+
+  const addFoodItem = () => {
+    setFoodItems(current => current.concat([{
+      id: Date.now().toString() + Math.random().toString(36).slice(2, 7),
+      name: '',
+      category: 'Platos regionales',
+      description: '',
+      price: '',
+      imageUrl: '',
+      imagePath: ''
+    }]));
+  };
+
+  const removeFoodItem = id => {
+    setFoodItems(current => {
+      const target = current.find(item => item.id === id);
+      if (target?.imagePreview?.startsWith('blob:')) URL.revokeObjectURL(target.imagePreview);
+      return current.filter(item => item.id !== id);
+    });
+  };
+
+  const handleSubmit = async event => {
+    event.preventDefault();
     if (!formData.lat || !formData.lng) {
-      showNotification("Por favor marca la ubicación en el mapa", "error");
+      showNotification('Por favor marca la ubicación en el mapa', 'error');
       return;
     }
-    
     setSaving(true);
     try {
       const poolsRef = collection(db, 'artifacts', appId, 'public', 'data', 'pools');
-      
+      const targetRef = pool?.id ? doc(db, 'artifacts', appId, 'public', 'data', 'pools', pool.id) : doc(poolsRef);
+      const poolId = targetRef.id;
+      const savedFoodItems = formData.hasFood ? foodItems.filter(item => item.name.trim()).map(item => ({
+          name: item.name.trim().slice(0, 80),
+          category: item.category || 'Otros',
+          description: (item.description || '').trim().slice(0, 240),
+          price: item.price === '' ? null : Number(item.price),
+          imageUrl: item.imageUrl || '',
+          imagePath: item.imagePath || ''
+      })) : [];
+
       const payload = {
         ownerId: pool?.ownerId || user.uid,
-        name: formData.name,
+        name: formData.name.trim(),
+        venueType: formData.venueType,
+        hasKidsPool: Boolean(formData.hasKidsPool),
         openTime: formData.openTime,
         closeTime: formData.closeTime,
         price: Number(formData.price),
         hasFood: formData.hasFood,
-        foodMenu: formData.hasFood ? formData.foodMenu : '',
-        whatsapp: formData.whatsapp,
+        foodMenu: formData.hasFood ? formData.foodMenu.trim() : '',
+        foodItems: savedFoodItems,
+        images: formData.images,
+        whatsapp: formData.whatsapp.trim(),
         lat: formData.lat,
         lng: formData.lng,
         isFull: pool ? pool.isFull : false,
         updatedAt: new Date().toISOString()
       };
 
-      if (pool && pool.id) {
-        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'pools', pool.id), payload);
-        showNotification("Piscina actualizada correctamente", "success");
+      if (pool?.id) {
+        await updateDoc(targetRef, payload);
+        showNotification('Piscina actualizada correctamente', 'success');
       } else {
-        payload.createdAt = new Date().toISOString();
-        await addDoc(poolsRef, payload);
-        showNotification("Piscina creada correctamente", "success");
+        await setDoc(targetRef, { ...payload, createdAt: new Date().toISOString() });
+        showNotification('Establecimiento creado correctamente', 'success');
       }
       onClose();
-    } catch (err) {
-      console.error("Firestore save error:", err);
-      const code = err?.code || "unknown";
+    } catch (error) {
+      console.error('Firebase save error:', error);
+      const code = error?.code || 'unknown';
       const messages = {
-        "permission-denied": "Firebase rechazó el guardado. Verifica que tu cuenta esté aprobada y que las reglas de Firestore estén publicadas.",
-        "unauthenticated": "Tu sesión expiró. Vuelve a iniciar sesión.",
-        "unavailable": "Firebase no está disponible temporalmente. Comprueba tu conexión e inténtalo otra vez.",
-        "failed-precondition": "La base de datos necesita revisar su configuración.",
+        'permission-denied': 'Firebase rechazó el guardado. Revisa las reglas de Firestore y que tu cuenta esté aprobada.',
+        'unauthenticated': 'Tu sesión expiró. Vuelve a iniciar sesión.',
+        'unavailable': 'Firebase no está disponible temporalmente. Comprueba tu conexión e inténtalo otra vez.'
       };
-      showNotification(messages[code] || `No se pudo guardar (${code}): ${err?.message || "error desconocido"}`, "error");
+      showNotification(messages[code] || ('No se pudo guardar: ' + (error?.message || 'error desconocido')), 'error');
     } finally {
       setSaving(false);
     }
@@ -903,100 +1218,100 @@ function PoolForm({ user, pool, onClose, showNotification }) {
         <button onClick={onClose} className="p-2 bg-[#1E293B] hover:bg-slate-700 rounded-full transition-colors">
           <X className="w-5 h-5 text-slate-300" />
         </button>
-        <h2 className="text-2xl font-bold text-white">{pool ? 'Editar Piscina' : 'Nueva Piscina'}</h2>
+        <div>
+          <h2 className="text-2xl font-bold text-white">{pool ? 'Editar establecimiento' : 'Nuevo establecimiento'}</h2>
+          <p className="text-sm text-slate-400">Completa los datos que aparecerán en el directorio público.</p>
+        </div>
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-8 h-auto lg:h-[600px]">
+      <div className="flex flex-col lg:flex-row gap-8 h-auto lg:h-[720px]">
         <form onSubmit={handleSubmit} className="flex-1 bg-[#1E293B] border border-slate-700 p-6 rounded-2xl shadow-xl overflow-y-auto space-y-5">
-          
           <div>
-            <label className="block text-sm font-semibold text-slate-300 mb-1">Nombre del Local</label>
-            <input 
-              required
-              type="text" 
-              value={formData.name}
-              onChange={e => setFormData({...formData, name: e.target.value})}
-              className="w-full bg-[#0F172A] border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
-              placeholder="Ej. Recreo El Bosque"
-            />
+            <label className="block text-sm font-semibold text-slate-300 mb-2">Nombre del establecimiento</label>
+            <input required type="text" maxLength={100} value={formData.name} onChange={event => setFormData({ ...formData, name: event.target.value })} className={inputClass} placeholder="Ej. Recreo El Bosque" />
           </div>
+
+          <fieldset className="border border-slate-700 rounded-xl p-4">
+            <legend className="px-2 text-sm font-semibold text-slate-300">Tipo de lugar</legend>
+            <div className="flex flex-wrap gap-4">
+              <label className="flex items-center gap-2 text-sm text-slate-200 cursor-pointer">
+                <input type="radio" name="venueType" value="pool" checked={formData.venueType === 'pool'} onChange={event => setFormData({ ...formData, venueType: event.target.value })} className="accent-cyan-500" />
+                Piscina
+              </label>
+              <label className="flex items-center gap-2 text-sm text-slate-200 cursor-pointer">
+                <input type="radio" name="venueType" value="quebrada" checked={formData.venueType === 'quebrada'} onChange={event => setFormData({ ...formData, venueType: event.target.value })} className="accent-cyan-500" />
+                Quebrada
+              </label>
+            </div>
+            <label className="flex items-center gap-3 mt-4 text-sm text-slate-200 cursor-pointer">
+              <input type="checkbox" checked={formData.hasKidsPool} onChange={event => setFormData({ ...formData, hasKidsPool: event.target.checked })} className="w-5 h-5 accent-cyan-500" />
+              Cuenta con piscina para niños
+            </label>
+          </fieldset>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-semibold text-slate-300 mb-1">Abre a las</label>
-              <input 
-                required
-                type="time" 
-                value={formData.openTime}
-                onChange={e => setFormData({...formData, openTime: e.target.value})}
-                className="w-full bg-[#0F172A] border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500"
-              />
+              <input required type="time" value={formData.openTime} onChange={event => setFormData({ ...formData, openTime: event.target.value })} className={inputClass} />
             </div>
             <div>
               <label className="block text-sm font-semibold text-slate-300 mb-1">Cierra a las</label>
-              <input 
-                required
-                type="time" 
-                value={formData.closeTime}
-                onChange={e => setFormData({...formData, closeTime: e.target.value})}
-                className="w-full bg-[#0F172A] border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500"
-              />
+              <input required type="time" value={formData.closeTime} onChange={event => setFormData({ ...formData, closeTime: event.target.value })} className={inputClass} />
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-semibold text-slate-300 mb-1">Precio Entrada (S/)</label>
-              <input 
-                required
-                type="number" 
-                min="0"
-                step="0.5"
-                value={formData.price}
-                onChange={e => setFormData({...formData, price: e.target.value})}
-                className="w-full bg-[#0F172A] border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500"
-                placeholder="0 para gratis"
-              />
+              <label className="block text-sm font-semibold text-slate-300 mb-1">Precio de entrada (S/)</label>
+              <input required type="number" min="0" step="0.5" value={formData.price} onChange={event => setFormData({ ...formData, price: event.target.value })} className={inputClass} placeholder="0 para gratis" />
             </div>
             <div>
               <label className="block text-sm font-semibold text-slate-300 mb-1">WhatsApp (+51)</label>
-              <input 
-                type="tel" 
-                value={formData.whatsapp}
-                onChange={e => setFormData({...formData, whatsapp: e.target.value})}
-                className="w-full bg-[#0F172A] border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500"
-                placeholder="Ej. 987654321"
-              />
+              <input type="tel" value={formData.whatsapp} onChange={event => setFormData({ ...formData, whatsapp: event.target.value })} className={inputClass} placeholder="Ej. 987654321" />
             </div>
           </div>
 
-          <div className="pt-2 border-t border-slate-700">
+          <section className="border-t border-slate-700 pt-5">
             <label className="flex items-center gap-3 cursor-pointer mb-3">
-              <input 
-                type="checkbox" 
-                checked={formData.hasFood}
-                onChange={e => setFormData({...formData, hasFood: e.target.checked})}
-                className="w-5 h-5 rounded bg-[#0F172A] border-slate-600 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-900"
-              />
-              <span className="text-sm font-semibold text-slate-300">Ofrecen platos a la carta / comida</span>
+              <input type="checkbox" checked={formData.hasFood} onChange={event => setFormData({ ...formData, hasFood: event.target.checked })} className="w-5 h-5 accent-cyan-500" />
+              <span className="text-sm font-semibold text-slate-300">Este establecimiento ofrece comida</span>
             </label>
-            
             {formData.hasFood && (
-              <textarea 
-                value={formData.foodMenu}
-                onChange={e => setFormData({...formData, foodMenu: e.target.value})}
-                className="w-full bg-[#0F172A] border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500 h-24 resize-none"
-                placeholder="Ej. Ceviche, Chicharrón, Gaseosas..."
-              />
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-bold text-white">Carta de comidas</h3>
+                    <p className="text-xs text-slate-400">Agrega cada plato con su categoría y precio.</p>
+                  </div>
+                  <button type="button" onClick={addFoodItem} className="flex items-center gap-2 rounded-lg bg-cyan-500/15 text-cyan-300 px-3 py-2 text-sm font-semibold hover:bg-cyan-500/25"><Plus className="w-4 h-4" /> Agregar plato</button>
+                </div>
+                {foodItems.length === 0 && <p className="text-sm text-slate-400 bg-slate-800/60 rounded-lg p-3">Todavía no agregaste platos. Puedes empezar con los platos regionales, pescados o bebidas.</p>}
+                {foodItems.map((item, index) => (
+                  <div key={item.id} className="border border-slate-700 rounded-xl p-3 space-y-3">
+                    <div className="flex justify-between items-center gap-2">
+                      <p className="text-sm font-semibold text-white">Plato {index + 1}</p>
+                      <button type="button" onClick={() => removeFoodItem(item.id)} className="text-rose-300 hover:text-rose-200 text-xs">Quitar plato</button>
+                    </div>
+                    <input value={item.name} onChange={event => updateFoodItem(item.id, { name: event.target.value })} maxLength={80} placeholder="Nombre del plato" className={inputClass} />
+                    <div className="grid grid-cols-2 gap-3">
+                      <select value={item.category || 'Platos regionales'} onChange={event => updateFoodItem(item.id, { category: event.target.value })} className={inputClass}>
+                        {categories.map(category => <option key={category} value={category}>{category}</option>)}
+                      </select>
+                      <input type="number" min="0" step="0.5" value={item.price ?? ''} onChange={event => updateFoodItem(item.id, { price: event.target.value })} placeholder="Precio S/" className={inputClass} />
+                    </div>
+                    <textarea value={item.description || ''} onChange={event => updateFoodItem(item.id, { description: event.target.value })} maxLength={240} rows={2} placeholder="Descripción breve del plato" className={inputClass + ' resize-y'} />
+                  </div>
+                ))}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">Información adicional del menú (opcional)</label>
+                  <textarea value={formData.foodMenu} onChange={event => setFormData({ ...formData, foodMenu: event.target.value })} rows={2} maxLength={500} className={inputClass + ' resize-y'} placeholder="Ej. Atención de cocina hasta las 16:00, platos por temporada..." />
+                </div>
+              </div>
             )}
-          </div>
+          </section>
 
-          <button 
-            type="submit" 
-            disabled={saving}
-            className="w-full bg-cyan-500 hover:bg-cyan-400 text-slate-900 font-bold py-3.5 rounded-xl shadow-lg transition-all disabled:opacity-50"
-          >
-            {saving ? 'Guardando...' : 'Guardar Piscina'}
+          <button type="submit" disabled={saving} className="w-full bg-cyan-500 hover:bg-cyan-400 text-slate-900 font-bold py-3.5 rounded-xl shadow-lg transition-all disabled:opacity-50">
+            {saving ? 'Guardando…' : 'Guardar establecimiento'}
           </button>
         </form>
 
@@ -1005,20 +1320,15 @@ function PoolForm({ user, pool, onClose, showNotification }) {
             <MapPin className="w-6 h-6 text-cyan-400 shrink-0 mt-0.5" />
             <div>
               <p className="font-semibold text-white">Ubicación en el mapa</p>
-              <p className="text-xs text-slate-400">Haz clic en el mapa para marcar exactamente dónde está tu piscina.</p>
+              <p className="text-xs text-slate-400">Haz clic en el mapa para marcar exactamente dónde está tu piscina o quebrada.</p>
+              {formData.lat != null && formData.lng != null && <p className="text-[11px] text-emerald-300 mt-1">Coordenadas: {Number(formData.lat).toFixed(5)}, {Number(formData.lng).toFixed(5)}</p>}
             </div>
           </div>
           <div className="flex-1 rounded-xl overflow-hidden border border-slate-700 relative">
-            <MapComponent 
-              pools={[]}
-              onMapClick={(coords) => setFormData({...formData, lat: coords[0], lng: coords[1]})}
-              editingPosition={formData.lat ? [formData.lat, formData.lng] : null}
-            />
-            {!formData.lat && (
+            <MapComponent pools={[]} onMapClick={coords => setFormData(current => ({ ...current, lat: coords[0], lng: coords[1] }))} editingPosition={formData.lat != null && formData.lng != null ? [formData.lat, formData.lng] : null} />
+            {formData.lat == null && (
               <div className="absolute inset-0 bg-black/40 z-[400] flex items-center justify-center pointer-events-none">
-                <div className="bg-[#1E293B] px-4 py-2 rounded-full border border-cyan-500 text-cyan-400 font-medium animate-pulse shadow-lg">
-                  Toca el mapa para ubicar
-                </div>
+                <div className="bg-[#1E293B] px-4 py-2 rounded-full border border-cyan-500 text-cyan-400 font-medium animate-pulse shadow-lg">Toca el mapa para ubicar</div>
               </div>
             )}
           </div>
