@@ -6,7 +6,7 @@ import {
   MapPin, Map as MapIcon, List, Clock, DollarSign, Utensils, 
   MessageCircle, Plus, Edit2, Trash2, CheckCircle, XCircle, 
   Settings, LogOut, Info, AlertTriangle, Menu, X,
-  Download, Smartphone, Share, Mail as MailIcon, Star, ChevronDown, ChevronUp,
+  Download, Mail as MailIcon, Star, ChevronDown, ChevronUp,
   ChevronLeft, ChevronRight, Navigation
 } from 'lucide-react';
 
@@ -18,6 +18,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || '').trim().toLowerCase();
+const APK_DOWNLOAD_URL = 'https://github.com/025240090g-arch/piscimadre/releases/download/android-v1.0.0/app-debug.apk';
 const OWNER_PROFILES_COLLECTION = 'ownerProfiles';
 const isAdminUser = (user) => Boolean(ADMIN_EMAIL && user?.emailVerified && user?.email?.toLowerCase() === ADMIN_EMAIL);
 
@@ -74,8 +75,7 @@ export default function PoolDirectoryApp() {
   const [viewMode, setViewMode] = useState('public');
   const [notification, setNotification] = useState({ show: false, message: '', type: 'info' });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [showInstallModal, setShowInstallModal] = useState(false);
-  const [filters, setFilters] = useState({ openNow: false, free: false, food: false });
+    const [filters, setFilters] = useState({ openNow: false, free: false, food: false });
 
   useEffect(() => {
     injectStyles();
@@ -221,12 +221,13 @@ export default function PoolDirectoryApp() {
         </div>
 
         <div className="hidden md:flex gap-4 items-center">
-          <button 
-            onClick={() => setShowInstallModal(true)}
+          <a
+            href={APK_DOWNLOAD_URL}
+            download="Piscimadre.apk"
             className="flex items-center gap-2 text-cyan-400 hover:text-cyan-300 font-medium mr-4 px-3 py-1.5 rounded-lg border border-cyan-500/30 hover:bg-cyan-500/10 transition-colors"
           >
-            <Download className="w-4 h-4" /> Instalar App
-          </button>
+            <Download className="w-4 h-4" /> Descargar App
+          </a>
           <button 
             onClick={() => setViewMode('public')}
             className={`px-4 py-2 rounded-lg font-medium transition-all ${viewMode === 'public' ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
@@ -248,12 +249,14 @@ export default function PoolDirectoryApp() {
 
       {mobileMenuOpen && (
         <div className="md:hidden bg-[#1E293B] border-b border-[#334155] p-4 flex flex-col gap-3 absolute w-full z-40 shadow-xl">
-          <button 
-            onClick={() => { setShowInstallModal(true); setMobileMenuOpen(false); }}
+          <a
+            href={APK_DOWNLOAD_URL}
+            download="Piscimadre.apk"
+            onClick={() => setMobileMenuOpen(false)}
             className="px-4 py-3 rounded-lg font-bold w-full text-left flex items-center gap-2 bg-gradient-to-r from-cyan-600 to-cyan-500 text-white shadow-lg mb-2"
           >
-            <Smartphone className="w-5 h-5" /> Instalar en el Celular
-          </button>
+            <Download className="w-5 h-5" /> Descargar App
+          </a>
           <button 
             onClick={() => { setViewMode('public'); setMobileMenuOpen(false); }}
             className={`px-4 py-3 rounded-lg font-medium w-full text-left ${viewMode === 'public' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-300'}`}
@@ -310,7 +313,6 @@ export default function PoolDirectoryApp() {
         )}
       </main>
 
-      {showInstallModal && <InstallModal onClose={() => setShowInstallModal(false)} />}
     </div>
   );
 }
@@ -1343,51 +1345,5 @@ function DropletIcon(props) {
     <svg {...props} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"></path>
     </svg>
-  );
-}
-
-function InstallModal({ onClose }) {
-  return (
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-[#1E293B] border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-xl font-bold text-white flex items-center gap-2">
-            <Smartphone className="w-6 h-6 text-cyan-400" />
-            Instalar App
-          </h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-700 transition-colors">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        
-        <p className="text-slate-300 text-sm mb-6 leading-relaxed">
-          Para tener <strong>PisciMadre</strong> en tu pantalla de inicio como una aplicación, sigue estos pasos según tu celular:
-        </p>
-
-        <div className="space-y-4">
-          <div className="bg-[#0F172A] p-4 rounded-xl border border-slate-700">
-            <h4 className="font-bold text-emerald-400 mb-2 flex items-center gap-2">🤖 En Android (Chrome)</h4>
-            <ol className="text-sm text-slate-300 space-y-2 list-decimal list-inside ml-1">
-              <li>Toca el menú de <strong>tres puntos</strong> (arriba a la derecha).</li>
-              <li>Selecciona <strong>"Agregar a la pantalla principal"</strong>.</li>
-              <li>Confirma tocando <strong>Agregar</strong>.</li>
-            </ol>
-          </div>
-
-          <div className="bg-[#0F172A] p-4 rounded-xl border border-slate-700">
-            <h4 className="font-bold text-cyan-400 mb-2 flex items-center gap-2">🍎 En iPhone (Safari)</h4>
-            <ol className="text-sm text-slate-300 space-y-2 list-decimal list-inside ml-1">
-              <li>Toca el botón <strong>Compartir</strong> <Share className="w-4 h-4 inline-block mb-1" /> (abajo en el centro).</li>
-              <li>Desliza hacia abajo y toca <strong>"Agregar a inicio"</strong>.</li>
-              <li>Confirma tocando <strong>Agregar</strong>.</li>
-            </ol>
-          </div>
-        </div>
-
-        <button onClick={onClose} className="w-full mt-6 bg-slate-700 hover:bg-slate-600 text-white font-bold py-3.5 rounded-xl transition-colors">
-          Entendido
-        </button>
-      </div>
-    </div>
   );
 }
