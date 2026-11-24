@@ -1,0 +1,21 @@
+{
+  "id": "/",
+  "name": "Piscimadre",
+  "short_name": "Piscimadre",
+  "description": "Directorio de piscinas y lugares para disfrutar en Puerto Maldonado.",
+  "lang": "es-PE",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#1e293b",
+  "icons": [
+    {
+      "src": "/piscimadre-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
