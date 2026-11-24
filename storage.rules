@@ -1,0 +1,47 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isPiscimadreAdmin() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email == 'REEMPLAZA_CON_EL_CORREO_ADMIN';
+    }
+
+    function isApprovedOwner() {
+      return isPiscimadreAdmin()
+        || (
+          request.auth != null
+          && firestore.exists(/databases/(default)/documents/ownerProfiles/$(request.auth.uid))
+          && firestore.get(/databases/(default)/documents/ownerProfiles/$(request.auth.uid)).data.status == 'approved'
+        );
+    }
+
+    function validImageUpload() {
+      return request.resource != null
+        && request.resource.size <= 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp|gif)');
+    }
+
+    match /poolPhotos/{uploaderId}/{poolId}/{fileName} {
+      allow read: if true;
+      allow create, update: if request.auth != null
+        && request.auth.uid == uploaderId
+        && isApprovedOwner()
+        && validImageUpload();
+      allow delete: if request.auth != null
+        && request.auth.uid == uploaderId
+        && isApprovedOwner();
+    }
+
+    match /menuPhotos/{uploaderId}/{poolId}/{fileName} {
+      allow read: if true;
+      allow create, update: if request.auth != null
+        && request.auth.uid == uploaderId
+        && isApprovedOwner()
+        && validImageUpload();
+      allow delete: if request.auth != null
+        && request.auth.uid == uploaderId
+        && isApprovedOwner();
+    }
+  }
+}
