@@ -872,22 +872,10 @@ function AdminDashboard({ user, pools, showNotification, onLogout }) {
     return () => unsubscribe();
   }, []);
 
+  // Las opiniones son públicas y se publican al enviarse; no existe cola de moderación.
   useEffect(() => {
-    const pendingQuery = query(collectionGroup(db, 'reviews'), where('status', '==', 'pending'));
-    const unsubscribe = onSnapshot(pendingQuery, snapshot => {
-      setPendingReviews(snapshot.docs.map(reviewDoc => ({
-        id: reviewDoc.id,
-        ref: reviewDoc.ref,
-        poolId: reviewDoc.ref.parent.parent ? reviewDoc.ref.parent.parent.id : '',
-        ...reviewDoc.data()
-      })));
-      setLoadingReviews(false);
-    }, error => {
-      console.error('Admin pending reviews listener error:', error);
-      setLoadingReviews(false);
-      showNotification('No se pudieron cargar las opiniones pendientes. Revisa las reglas de Firestore.', 'error');
-    });
-    return () => unsubscribe();
+    setPendingReviews([]);
+    setLoadingReviews(false);
   }, []);
 
   const decideOwner = async (owner, status) => {
@@ -961,35 +949,8 @@ function AdminDashboard({ user, pools, showNotification, onLogout }) {
         </div>
 
         <div className="bg-[#1E293B] border border-slate-700 rounded-2xl p-6 mb-8">
-          <div className="flex justify-between items-center gap-3 mb-5">
-            <div>
-              <h3 className="text-xl font-bold text-white">Opiniones por revisar</h3>
-              <p className="text-sm text-slate-400">Las opiniones solo aparecen en el directorio después de aprobarlas.</p>
-            </div>
-            <span className="bg-amber-500/15 text-amber-300 rounded-full px-3 py-1 text-sm">{pendingReviews.length} pendientes</span>
-          </div>
-          {loadingReviews ? <p className="text-slate-400">Cargando opiniones…</p> : pendingReviews.length === 0 ? <p className="text-slate-400">No hay opiniones pendientes.</p> : (
-            <div className="space-y-3">
-              {pendingReviews.map(review => {
-                const pool = pools.find(item => item.id === review.poolId);
-                return (
-                  <div key={review.id} className="p-4 bg-[#0F172A] rounded-xl border border-slate-700">
-                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="font-semibold text-white">{review.displayName || 'Visitante'} · {pool ? pool.name : 'Piscina'}</p>
-                        <p className="text-amber-300 text-sm">{'★'.repeat(Math.max(0, Math.min(5, Number(review.rating) || 0)))}{'☆'.repeat(5 - Math.max(0, Math.min(5, Number(review.rating) || 0)))}</p>
-                        <p className="text-sm text-slate-300 mt-2 break-words">{review.comment}</p>
-                      </div>
-                      <div className="flex gap-2 shrink-0">
-                        <button onClick={() => decideReview(review, 'rejected')} className="px-4 py-2 rounded-lg border border-rose-500/40 text-rose-300 hover:bg-rose-500/10">Rechazar</button>
-                        <button onClick={() => decideReview(review, 'approved')} className="px-4 py-2 rounded-lg bg-emerald-500 text-slate-950 font-bold hover:bg-emerald-400">Publicar</button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          <h3 className="text-xl font-bold text-white">Opiniones públicas</h3>
+          <p className="text-sm text-slate-400 mt-2">Las opiniones de los visitantes se publican automáticamente. No requieren revisión ni aprobación.</p>
         </div>
 
         <OwnerDashboard user={user} pools={pools} showNotification={showNotification} onLogout={null} isAdmin={true} />
