@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, signOut, reload, updateProfile } from 'firebase/auth';
-import { getFirestore, collection, collectionGroup, query, where, doc, addDoc, updateDoc, deleteDoc, onSnapshot, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, query, where, doc, addDoc, updateDoc, deleteDoc, onSnapshot, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { 
   MapPin, Map as MapIcon, List, Clock, DollarSign, Utensils, 
   MessageCircle, Plus, Edit2, Trash2, CheckCircle, XCircle, 
@@ -562,7 +562,6 @@ function PoolReviews({ poolId }) {
       const reviewsRef = collection(db, 'artifacts', appId, 'public', 'data', 'pools', poolId, 'reviews');
       await addDoc(reviewsRef, {
         displayName: displayName.trim().slice(0, 60),
-        userId: auth.currentUser.uid,
         rating,
         comment: comment.trim().slice(0, 500),
         status: 'approved',
