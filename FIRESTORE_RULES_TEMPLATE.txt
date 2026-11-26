@@ -85,5 +85,20 @@ service cloud.firestore {
       allow delete: if isAdmin()
         || (isApprovedOwner() && resource.data.ownerId == request.auth.uid);
     }
+
+    // Opiniones públicas: cualquiera puede leer y publicar sin verificar correo.
+    // La aplicación crea una sesión anónima automática; las reglas no exigen cuenta.
+    match /artifacts/default-app-id/public/data/pools/{poolId}/reviews/{reviewId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['displayName', 'rating', 'comment', 'status', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['displayName', 'userId', 'rating', 'comment', 'status', 'createdAt'])
+        && request.resource.data.displayName is string
+        && request.resource.data.rating is int
+        && request.resource.data.rating >= 1
+        && request.resource.data.rating <= 5
+        && request.resource.data.comment is string
+        && request.resource.data.status == 'approved';
+      allow update, delete: if isAdmin();
+    }
   }
 }
