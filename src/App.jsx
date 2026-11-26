@@ -565,12 +565,12 @@ function PoolReviews({ poolId }) {
         userId: auth.currentUser.uid,
         rating,
         comment: comment.trim().slice(0, 500),
-        status: 'pending',
+        status: 'approved',
         createdAt: serverTimestamp()
       });
       setComment('');
       setRating(5);
-      setNotice('¡Gracias! Tu opinión quedó pendiente de revisión antes de publicarse.');
+      setNotice('¡Gracias! Tu opinión ya se publicó.');
     } catch (error) {
       console.error('Review submit error:', error);
       setNotice('No se pudo enviar la opinión. Revisa la configuración de reglas de Firebase.');
@@ -617,7 +617,7 @@ function PoolReviews({ poolId }) {
             <textarea value={comment} onChange={event => setComment(event.target.value)} required minLength={3} maxLength={500} rows={3} placeholder="¿Qué tal fue tu visita?" className="w-full bg-[#0F172A] border border-slate-600 rounded-lg px-3 py-2 text-sm text-white resize-y" />
             <button disabled={sending} className="w-full rounded-lg bg-cyan-500 hover:bg-cyan-400 disabled:opacity-60 text-slate-950 font-bold py-2.5 text-sm">{sending ? 'Enviando…' : 'Enviar opinión'}</button>
             {notice && <p className="text-xs text-slate-400" role="status">{notice}</p>}
-            <p className="text-[11px] text-slate-500">Las opiniones se publican después de una revisión para evitar spam.</p>
+            <p className="text-[11px] text-slate-500">Tu opinión aparece públicamente al enviarla. No necesitas verificar tu correo.</p>
           </form>
         </div>
       )}
