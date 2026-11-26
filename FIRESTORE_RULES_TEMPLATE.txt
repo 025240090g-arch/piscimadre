@@ -22,7 +22,7 @@ service cloud.firestore {
 
     function validPoolData(data) {
       return data.keys().hasAll([
-          'ownerId', 'name', 'openTime', 'closeTime', 'price', 'hasFood',
+          'ownerId', 'name', 'venueType', 'hasKidsPool', 'openTime', 'closeTime', 'price', 'kidsPrice', 'hasFood',
           'foodMenu', 'whatsapp', 'lat', 'lng', 'isFull', 'updatedAt', 'createdAt'
         ])
         && data.keys().hasOnly([
@@ -32,7 +32,10 @@ service cloud.firestore {
         && data.ownerId is string
         && data.name is string && data.name.size() > 0 && data.name.size() <= 120
         && data.openTime is string && data.closeTime is string
+        && data.venueType in ['pool', 'quebrada', 'beach']
+        && data.hasKidsPool is bool
         && data.price is number && data.price >= 0
+        && data.kidsPrice is number && data.kidsPrice >= 0
         && data.hasFood is bool && data.foodMenu is string
         && data.whatsapp is string
         && data.lat is number && data.lat >= -90 && data.lat <= 90
