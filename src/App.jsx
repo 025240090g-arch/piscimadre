@@ -463,6 +463,10 @@ function PoolCard({ pool }) {
             <DollarSign className="w-4 h-4 text-emerald-400 shrink-0" />
             <span className="font-semibold">Adultos: {Number(pool.price) === 0 ? 'Gratis' : 'S/ ' + pool.price}</span>
           </div>
+          <div className="flex items-center gap-2">
+            <DollarSign className="w-4 h-4 text-violet-400 shrink-0" />
+            <span className="font-semibold">Niños: {Number(pool.kidsPrice ?? 0) === 0 ? 'Gratis' : 'S/ ' + pool.kidsPrice}</span>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
