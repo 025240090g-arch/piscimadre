@@ -445,7 +445,7 @@ function PoolCard({ pool }) {
 
         <div className="flex flex-wrap gap-2 mb-4">
           <span className="rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 px-3 py-1 text-xs font-semibold">
-            {pool.venueType === 'quebrada' ? 'Quebrada' : 'Piscina'}
+            {pool.venueType === 'quebrada' ? 'Quebrada' : pool.venueType === 'beach' ? 'Playa' : 'Piscina'}
           </span>
           {pool.hasKidsPool && (
             <span className="rounded-full bg-violet-500/15 border border-violet-500/30 text-violet-300 px-3 py-1 text-xs font-semibold">
@@ -461,7 +461,7 @@ function PoolCard({ pool }) {
           </div>
           <div className="flex items-center gap-2">
             <DollarSign className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span className="font-semibold">{Number(pool.price) === 0 ? 'Gratis' : 'S/ ' + pool.price}</span>
+            <span className="font-semibold">Adultos: {Number(pool.price) === 0 ? 'Gratis' : 'S/ ' + pool.price}</span>
           </div>
         </div>
 
@@ -717,7 +717,7 @@ function MapComponent({ pools, onMapClick, editingPosition }) {
             ${pool.isFull ? '🔴 Lleno' : '🟢 Disponible'}
           </p>
           <p class="text-sm">🕒 ${pool.openTime} - ${pool.closeTime}</p>
-          <p class="text-sm">💰 ${Number(pool.price) === 0 ? 'Gratis' : 'S/ ' + pool.price}</p>
+          <p class="text-sm">💰 Adultos: ${Number(pool.price) === 0 ? 'Gratis' : 'S/ ' + pool.price}<br/>🧒 Niños: ${Number(pool.kidsPrice ?? 0) === 0 ? 'Gratis' : 'S/ ' + pool.kidsPrice}</p>
         </div>
       `;
       marker.bindPopup(popupContent);
@@ -1116,6 +1116,7 @@ function PoolForm({ user, pool, onClose, showNotification }) {
     openTime: pool?.openTime || '09:00',
     closeTime: pool?.closeTime || '18:00',
     price: pool?.price != null ? String(pool.price) : '10',
+    kidsPrice: pool?.kidsPrice != null ? String(pool.kidsPrice) : '0',
     hasFood: pool?.hasFood || false,
     foodMenu: pool?.foodMenu || '',
     images: Array.isArray(pool?.images) ? pool.images.map(photo => typeof photo === 'string' ? { url: photo } : photo).filter(photo => photo && photo.url) : [],
@@ -1181,6 +1182,7 @@ function PoolForm({ user, pool, onClose, showNotification }) {
         openTime: formData.openTime,
         closeTime: formData.closeTime,
         price: Number(formData.price),
+        kidsPrice: Number(formData.kidsPrice),
         hasFood: formData.hasFood,
         foodMenu: formData.hasFood ? formData.foodMenu.trim() : '',
         foodItems: savedFoodItems,
@@ -1244,6 +1246,10 @@ function PoolForm({ user, pool, onClose, showNotification }) {
                 <input type="radio" name="venueType" value="quebrada" checked={formData.venueType === 'quebrada'} onChange={event => setFormData({ ...formData, venueType: event.target.value })} className="accent-cyan-500" />
                 Quebrada
               </label>
+              <label className="flex items-center gap-2 text-sm text-slate-200 cursor-pointer">
+                <input type="radio" name="venueType" value="beach" checked={formData.venueType === 'beach'} onChange={event => setFormData({ ...formData, venueType: event.target.value })} className="accent-cyan-500" />
+                Playa
+              </label>
             </div>
             <label className="flex items-center gap-3 mt-4 text-sm text-slate-200 cursor-pointer">
               <input type="checkbox" checked={formData.hasKidsPool} onChange={event => setFormData({ ...formData, hasKidsPool: event.target.checked })} className="w-5 h-5 accent-cyan-500" />
@@ -1264,8 +1270,12 @@ function PoolForm({ user, pool, onClose, showNotification }) {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-semibold text-slate-300 mb-1">Precio de entrada (S/)</label>
+              <label className="block text-sm font-semibold text-slate-300 mb-1">Precio de entrada para adultos (S/)</label>
               <input required type="number" min="0" step="0.5" value={formData.price} onChange={event => setFormData({ ...formData, price: event.target.value })} className={inputClass} placeholder="0 para gratis" />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-300 mb-1">Precio de entrada para niños (S/)</label>
+              <input required type="number" min="0" step="0.5" value={formData.kidsPrice} onChange={event => setFormData({ ...formData, kidsPrice: event.target.value })} className={inputClass} placeholder="0 para gratis" />
             </div>
             <div>
               <label className="block text-sm font-semibold text-slate-300 mb-1">WhatsApp (+51)</label>
